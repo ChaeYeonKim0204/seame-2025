@@ -1,9 +1,42 @@
-# ROS2 auto-generated stuff (just in case)
+# IDE & Editor
+.vscode/
+.idea/
+
+# ROS2 auto-generated (already 있음, OK)
 build/
 install/
 log/
 
-# Python
+# Python cache (already 있음, OK)
 __pycache__/
 *.pyc
+*.pyo
+
+# NumPy, PyTorch, AI 관련
 *.npy
+*.npz
+*.pt
+*.onnx
+
+# OpenCV/이미지 관련
+*.jpg
+*.jpeg
+*.png
+*.bmp
+
+# 영상/녹화/시뮬레이션 데이터
+*.mp4
+*.avi
+*.bag
+
+# Database / 기타
+*.db
+*.sqlite3
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 로그 / 결과 저장 파일
+*.log
+*.csv
+*.yaml
