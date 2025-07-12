@@ -1,0 +1,9 @@
+# ROS2 auto-generated stuff (just in case)
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+*.npy
