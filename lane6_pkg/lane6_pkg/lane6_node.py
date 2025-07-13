@@ -163,23 +163,23 @@ def separateLine(lines, original_img):
     for i in lines:
         x1,y1,x2,y2 = i
 
-        if y2 - y1 == 0:
+        if x2 - x1 == 0:
             print("정지선")
 
-        slope = (y2 - y1) / (x2 -x1 + 1e-6)
+        fit = np.polyfit((x1,x2),(y1,y2),1)
+        slope = fit[0]
         
         # 오른쪽 차선 판별
-        if  slope > 0:
+        if slope > 0 and x1 > x_center:
             right_lines.append(i)
             right_detect = 1
 
         # 왼쪽 차선 판별
-        elif slope < 0:
+        elif slope < 0 and x1< x_center:
             left_lines.append(i)
             left_detect = 1
 
     return [right_lines, left_lines]
-
         
 #기울기와 직선의 시작점과 끝점좌표 반환
 def fit_line(original_img,distributed_lines, fin_y=100):  #distributed_lines -> cv2.fitLine() 함수에 넣을 좌표들
@@ -252,41 +252,38 @@ def regression(distriduted_lines, original_img):
 
     return represent_points, detect_code, slope
 
-def curve(distributes_lines):
-	left_lines = np.polyfit(())
-
-# def compute_intersection(represent_points):
-#     if represent_points[0] is None or represent_points[1] is  None:
-#         print("오른쪽 차선 없음")
-#         return None
+def compute_intersection(represent_points):
+    if represent_points[0] is None or represent_points[1] is  None:
+        print("오른쪽 차선 없음")
+        return None
     
-#     elif represent_points[2] is None or represent_points[3] is None:
-#         print("왼쪽 차선 없음")
-#         return None
+    elif represent_points[2] is None or represent_points[3] is None:
+        print("왼쪽 차선 없음")
+        return None
 
-#     # 오른쪽 차선 기울기, y 절편 구하기
-#     right_fit = np.polyfit((represent_points[0][0],represent_points[1][0]),(represent_points[0][1],represent_points[1][1]), 1)
-#     right_slope = right_fit[0]
-#     right_y = right_fit[1]
+    # 오른쪽 차선 기울기, y 절편 구하기
+    right_fit = np.polyfit((represent_points[0][0],represent_points[1][0]),(represent_points[0][1],represent_points[1][1]), 1)
+    right_slope = right_fit[0]
+    right_y = right_fit[1]
 
-#     # 왼쪽
-#     left_fit = np.polyfit((represent_points[2][0],represent_points[3][0]),(represent_points[2][1],represent_points[3][1]), 1)
-#     left_slope = left_fit[0]
-#     left_y = left_fit[1]
+    # 왼쪽
+    left_fit = np.polyfit((represent_points[2][0],represent_points[3][0]),(represent_points[2][1],represent_points[3][1]), 1)
+    left_slope = left_fit[0]
+    left_y = left_fit[1]
 
-#     # 기울기 행렬    
-#     A = np.array([[right_slope, -1], [left_slope, -1]])
-#     # y절편 행렬                                
-#     B = np.array([-right_y, -left_y])
+    # 기울기 행렬    
+    A = np.array([[right_slope, -1], [left_slope, -1]])
+    # y절편 행렬                                
+    B = np.array([-right_y, -left_y])
         
-#     # 연립방정식으로 교점 구하기
-#     try:
-#         vp = np.linalg.solve(A,B)
-#         return tuple(vp)
+    # 연립방정식으로 교점 구하기
+    try:
+        vp = np.linalg.solve(A,B)
+        return tuple(vp)
             
-#     except np.linalg.LinAlgError:
-#         print("두 직선은 평행하거나 일치하여 교점을 찾을 수 없습니다.")
-#         return None
+    except np.linalg.LinAlgError:
+        print("두 직선은 평행하거나 일치하여 교점을 찾을 수 없습니다.")
+        return None
     
 
 def predicDir(detect_code, slope, vp, represent_points):
