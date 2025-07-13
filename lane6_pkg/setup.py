@@ -24,7 +24,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'lane5_node = lane5_pkg.lane5_node:main',
+            'lane6_node = lane6_pkg.lane6_node:main',
             'control_node = control.control_node:main',
         ],
     },

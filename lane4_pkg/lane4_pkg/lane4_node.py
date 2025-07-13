@@ -8,6 +8,7 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 from rclpy.qos import qos_profile_sensor_data
+import math
 
 class ImageSubscriber(Node):
     def __init__(self):
@@ -24,12 +25,14 @@ class ImageSubscriber(Node):
         result = selective_erosion(img_mask)
         canny_img = apply_canny(result)
         lines = houghLines(canny_img)
+        image_height, image_width = original_img.shape[:2] 
+
         if lines:
             distributed_lines = separateLine(lines, original_img)
             represent_points, detect_code, slope = regression(distributed_lines, original_img)
             vp = compute_intersection(represent_points)
-            direction = predicDir(detect_code, slope, vp, represent_points)
-            steering, throttle = compute_control(direction)
+            direction, x_offset = predicDir(detect_code, slope, vp, represent_points, image_width)
+            steering, throttle = compute_control(direction, x_offset, image_height)
             self.publish_controls(steering, throttle)
         else:
             self.publish_controls(0.0, 0.0)
@@ -132,8 +135,8 @@ def apply_canny(result, low_thresh=100, high_thresh=200):
     ROI 마스크 이미지에 Canny Edge Detection 적용
     """
     canny = cv2.Canny(result, low_thresh, high_thresh)
-    cv2.imshow("Canny Edge", canny)
-    cv2.waitKey(1)
+    # cv2.imshow("Canny Edge", canny)
+    # cv2.waitKey(0)
     # cv2.destroyAllWindows()
     return canny
 
@@ -155,31 +158,31 @@ def separateLine(lines, original_img):
     right_lines = []
     left_lines = []
 
-    width = original_img.shape[1]
-    x_center = width / 2
-
     if not lines:
-         return [[],[]]
-    for i in lines:
-        x1,y1,x2,y2 = i
+        return [[], []]
 
-        if x2 - x1 == 0:
-            print("정지선")
+    # 가중 평균 중심 계산
+    x_coords = []
+    weights = []
+    for x1, y1, x2, y2 in lines:
+        x_coords.extend([x1, x2])
+        weights.extend([y1, y2])  # 아래쪽 점일수록 더 중요한 선으로 간주
 
-        fit = np.polyfit((x1,x2),(y1,y2),1)
-        slope = fit[0]
-        
-        # 오른쪽 차선 판별
-        if slope > 0 and x1 > x_center:
-            right_lines.append(i)
-            right_detect = 1
+    x_center = int(np.average(x_coords, weights=weights))
+    print(f"[DEBUG] 동적 x_center (가중 평균): {x_center}")
 
-        # 왼쪽 차선 판별
-        elif slope < 0 and x1< x_center:
-            left_lines.append(i)
-            left_detect = 1
+    for x1, y1, x2, y2 in lines:
+        if y2 - y1 == 0:
+            continue  # 수평선 무시
+
+        # 중심선을 기준으로 양쪽에 위치한 선을 분리
+        if x1 < x_center and x2 < x_center:
+            left_lines.append([x1, y1, x2, y2])
+        elif x1 > x_center and x2 > x_center:
+            right_lines.append([x1, y1, x2, y2])
 
     return [right_lines, left_lines]
+
         
 #기울기와 직선의 시작점과 끝점좌표 반환
 def fit_line(original_img,distributed_lines, fin_y=100):  #distributed_lines -> cv2.fitLine() 함수에 넣을 좌표들
@@ -286,47 +289,61 @@ def compute_intersection(represent_points):
         return None
     
 
-def predicDir(detect_code, slope, vp, represent_points):
-    
-    if represent_points is None or any(p is None for p in represent_points):
-        print("대표 점 중 None 있음 → undefined")
-        return "undefined"
+def predicDir(detect_code, slope, vp, represent_points, image_width):
+    """
+    방향 판단 및 주행 중심선 offset 계산
+    """
+    if represent_points is None or all(p is None for p in represent_points):
+        print("대표 점 전부 None → undefined")
+        return "undefined", 0
 
-    if (detect_code[1] == 0) and (detect_code[0] == 0):
-        print("Undefined")
-        return "undefined"
-    
-    thres_vp = 10.0  # 교차지점 임계값
-    represent_x_center = (represent_points[1][0] - represent_points[3][0]) / 2
-    print("검출한 직선 x좌표 중심", represent_x_center)
-    difference = abs(slope[1]) - abs(slope[0])
+    mid_x = image_width // 2
 
-    if (detect_code[1] == 1 and detect_code[0] == 1):
-        if (abs(difference)) < 1:
-            print("straight")
-            return "straight"
-        elif vp[0] < represent_x_center:
-            print("left turn")
-            return "left turn"
-        elif vp[0] > represent_x_center:
-            print("right turn")
-            return "right turn"
+    # 양쪽 차선 다 있는 경우
+    if detect_code[0] == 1 and detect_code[1] == 1:
+        center_line_x = int((represent_points[0][0] + represent_points[2][0]) / 2)
+        x_offset = center_line_x - mid_x
+
+        print(f"[INFO] dual lane detected, x_offset={x_offset}")
+
+        if abs(slope[1] - slope[0]) < 1:
+            return "straight", x_offset
+
+        elif vp is not None:
+            if vp[0] < center_line_x:
+                return "left turn", x_offset
+            else:
+                return "right turn", x_offset
         else:
-            print("straight")
-            return "straight"
+            if slope[0] > slope[1]:
+                return "right turn", x_offset
+            else:
+                return "left turn", x_offset
 
-    elif detect_code[1] == 1:
-        print("right turn")
-        return "right turn"
+    # 오른쪽 차선만 감지
     elif detect_code[0] == 1:
-        print("left turn")
-        return "left turn"
-    else:
-        print("Undefined")
-        return "undefined"
-    
-    print(f"교점과 중심 차이: {vp[0]-represent_x_center}")
-               
+        x_offset = represent_points[0][0] - mid_x
+        print(f"[INFO] only RIGHT lane detected, x_offset={x_offset}")
+
+        if slope[0] is not None and slope[0] > 0.7:
+            return "right turn", x_offset
+        else:
+            return "straight", x_offset
+
+    # 왼쪽 차선만 감지
+    elif detect_code[1] == 1:
+        x_offset = represent_points[2][0] - mid_x
+        print(f"[INFO] only LEFT lane detected, x_offset={x_offset}")
+
+        if slope[1] is not None and slope[1] < -0.7:
+            return "left turn", x_offset
+        else:
+            return "straight", x_offset
+
+    # 대표 좌표 일부만 있고 usable하지 않은 상황
+    print("대표 좌표 일부 누락 → fallback to undefined")
+    return "straight", 0  # fallback
+ 
 def draw_detected_lines(original_img, represent_points, vp=None):
     # 복사본 만들기
     img = original_img.copy()
@@ -347,20 +364,24 @@ def draw_detected_lines(original_img, represent_points, vp=None):
 
     return img
     
-def compute_control(direction):
-    if direction == "left turn":
-        steering = -0.7
-        throttle = 0.15
-    elif direction == "right turn":
-        steering = 0.4
-        throttle = 0.15
-    elif direction == "straight":
-        steering = -0.25
-        throttle = 0.15
-    else:  # undefined
-        steering = 0.0
-        throttle = 0.0
+def compute_control(direction, x_offset, image_height=720):
+    """
+    중심선 offset을 바탕으로 steering 계산
+    """
+    if direction == "undefined":
+        return 0.0, 0.0  # 정지
+
+    y_offset = image_height // 2
+    angle_to_mid_radian = math.atan(x_offset / y_offset)
+    angle_deg = angle_to_mid_radian * 180.0 / math.pi
+    steering_angle = angle_deg / 90  # 정규화된 steering 값 (-1 ~ 1 사이)
+
+    steering = float(np.clip(steering_angle, -1.0, 1.0))  # 안전 범위로 제한
+    throttle = 0.15 if direction != "undefined" else 0.0
+
+    print(f"[CONTROL] direction: {direction}, steering: {steering:.2f}, throttle: {throttle}")
     return steering, throttle
+
 
 
 if __name__ == "__main__":
