@@ -181,80 +181,81 @@ def separateLine(lines, original_img):
     return [right_lines, left_lines]
 
         
-#기울기와 직선의 시작점과 끝점좌표 반환
-def fit_line(original_img,distributed_lines, fin_y=100):  #distributed_lines -> cv2.fitLine() 함수에 넣을 좌표들
-    height = original_img.shape[0]
-    if len(distributed_lines) < 2:
-        return None, None
+# #기울기와 직선의 시작점과 끝점좌표 반환
+# def fit_line(original_img,distributed_lines, fin_y=100):  #distributed_lines -> cv2.fitLine() 함수에 넣을 좌표들
+#     height = original_img.shape[0]
+#     if len(distributed_lines) < 2:
+#         return None, None
 
-    vx, vy, x0, y0 = cv2.fitLine(np.array(distributed_lines), cv2.DIST_L2, 0, 0.01, 0.01)
-    slope = vy[0] / vx[0]
-    base_point = (x0[0], y0[0])
+#     vx, vy, x0, y0 = cv2.fitLine(np.array(distributed_lines), cv2.DIST_L2, 0, 0.01, 0.01)
+#     slope = vy[0] / vx[0]
+#     base_point = (x0[0], y0[0])
 
-    init_x = int(((height - base_point[1]) / slope) + base_point[0])
-    fin_x = int(((fin_y - base_point[1]) / slope) + base_point[0])
+#     init_x = int(((height - base_point[1]) / slope) + base_point[0])
+#     fin_x = int(((fin_y - base_point[1]) / slope) + base_point[0])
 
-    return slope, [(init_x, height), (fin_x, fin_y)]
+#     return slope, [(init_x, height), (fin_x, fin_y)]
 
-# 대표 직선 검출
-def regression(distriduted_lines, original_img):
-    right_lines, left_lines = distriduted_lines
-    height, width = original_img.shape[:2]
-    slope = [None] *2
-    detect_code = [None] *2
+# # 대표 직선 검출
+# def regression(distriduted_lines, original_img):
+#     right_lines, left_lines = distriduted_lines
+#     height, width = original_img.shape[:2]
+#     slope = [None] *2
+#     detect_code = [None] *2
   
-    # 결과 저장용
-    represent_points = [None] * 4
-    left_detect = 0
-    right_detect = 0
+#     # 결과 저장용
+#     represent_points = [None] * 4
+#     left_detect = 0
+#     right_detect = 0
 
-    # --------오른쪽 차선 처리-------------------
-    right_pts = []
-    if right_lines:
-        for x1, y1, x2, y2 in right_lines:
-            right_pts.append((x1, y1))
-            right_pts.append((x2, y2))
+#     # --------오른쪽 차선 처리-------------------
+#     right_pts = []
+#     if right_lines:
+#         for x1, y1, x2, y2 in right_lines:
+#             right_pts.append((x1, y1))
+#             right_pts.append((x2, y2))
         
-        slp, points = fit_line(original_img, right_pts)
-        slope[0] = slp
-        if points:
-            #오른쪽 차선 하단 점
-            represent_points[0] = points[0]
-            #오른쪽 차선 상단 점
-            represent_points[1] = points[1]
-            detect_code[0] = 1
+#         slp, points = fit_line(original_img, right_pts)
+#         slope[0] = slp
+#         if points:
+#             #오른쪽 차선 하단 점
+#             represent_points[0] = points[0]
+#             #오른쪽 차선 상단 점
+#             represent_points[1] = points[1]
+#             detect_code[0] = 1
             
-        else:
-            detect_code[0] = 0
+#         else:
+#             detect_code[0] = 0
        
 
 
-    # --------------- 왼쪽 차선 처리----------------
-    left_pts = []
-    if left_lines:
-        for x1, y1, x2, y2 in left_lines:
-            left_pts.append((x1, y1))
-            left_pts.append((x2, y2))
+#     # --------------- 왼쪽 차선 처리----------------
+#     left_pts = []
+#     if left_lines:
+#         for x1, y1, x2, y2 in left_lines:
+#             left_pts.append((x1, y1))
+#             left_pts.append((x2, y2))
         
-        slp, points = fit_line(original_img, left_pts) #최소제곱법(최적 직선)을 구하는 함수
-        slope[1] = slp
-        if points:
-            represent_points[2] = points[0]
-            represent_points[3] = points[1]
-            detect_code[1] = 1
+#         slp, points = fit_line(original_img, left_pts) #최소제곱법(최적 직선)을 구하는 함수
+#         slope[1] = slp
+#         if points:
+#             represent_points[2] = points[0]
+#             represent_points[3] = points[1]
+#             detect_code[1] = 1
          
-        else:
-            detect_code[1] = 0
+#         else:
+#             detect_code[1] = 0
             
-    if all (p is None for p in represent_points):
-        return None, detect_code, slope
+#     if all (p is None for p in represent_points):
+#         return None, detect_code, slope
         
 
-    return represent_points, detect_code, slope
+#     return represent_points, detect_code, slope
 
 def curve(distributes_lines):
-	left_lines = np.polyfit(())
-
+	left_lines = np.polyfit((left_lines[0], left_lines[1]),2)
+	right_lines = np.polyfit((right_lines[0], right_lines[1]),2)
+	
 # def compute_intersection(represent_points):
 #     if represent_points[0] is None or represent_points[1] is  None:
 #         print("오른쪽 차선 없음")
