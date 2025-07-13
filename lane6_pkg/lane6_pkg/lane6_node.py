@@ -132,8 +132,8 @@ def apply_canny(result, low_thresh=100, high_thresh=200):
     ROI 마스크 이미지에 Canny Edge Detection 적용
     """
     canny = cv2.Canny(result, low_thresh, high_thresh)
-    cv2.imshow("Canny Edge", canny)
-    cv2.waitKey(1)
+    # cv2.imshow("Canny Edge", canny)
+    # cv2.waitKey(1)
     # cv2.destroyAllWindows()
     return canny
 
@@ -160,11 +160,13 @@ def separateLine(lines, original_img):
 
     if not lines:
          return [[],[]]
+
+    # print("허프:",lines)
     for i in lines:
         x1,y1,x2,y2 = i
 
-        if x2 - x1 == 0:
-            print("정지선")
+        # if y2 - y1 == 0:
+        #     print("정지선")
 
         fit = np.polyfit((x1,x2),(y1,y2),1)
         slope = fit[0]
@@ -172,27 +174,26 @@ def separateLine(lines, original_img):
         # 오른쪽 차선 판별
         if slope > 0 and x1 > x_center:
             right_lines.append(i)
-            right_detect = 1
 
         # 왼쪽 차선 판별
         elif slope < 0 and x1< x_center:
             left_lines.append(i)
-            left_detect = 1
 
     return [right_lines, left_lines]
         
 #기울기와 직선의 시작점과 끝점좌표 반환
-def fit_line(original_img,distributed_lines, fin_y=100):  #distributed_lines -> cv2.fitLine() 함수에 넣을 좌표들
+def fit_line(original_img, distributed_lines, fin_y=100):  #distributed_lines -> cv2.fitLine() 함수에 넣을 좌표들
     height = original_img.shape[0]
-    if len(distributed_lines) < 2:
+
+    if (len(distributed_lines[0]) == 0 and len(distributed_lines[1]) == 0):
         return None, None
 
     vx, vy, x0, y0 = cv2.fitLine(np.array(distributed_lines), cv2.DIST_L2, 0, 0.01, 0.01)
-    slope = vy[0] / vx[0]
+    slope = vy[0] / (vx[0] + 10e+6)
     base_point = (x0[0], y0[0])
 
-    init_x = int(((height - base_point[1]) / slope) + base_point[0])
-    fin_x = int(((fin_y - base_point[1]) / slope) + base_point[0])
+    init_x = int(((height - base_point[1]) / (slope+10e+4)) + base_point[0])
+    fin_x = int(((fin_y - base_point[1]) / (slope+10e+4)) + base_point[0])
 
     return slope, [(init_x, height), (fin_x, fin_y)]
 
@@ -200,8 +201,8 @@ def fit_line(original_img,distributed_lines, fin_y=100):  #distributed_lines -> 
 def regression(distriduted_lines, original_img):
     right_lines, left_lines = distriduted_lines
     height, width = original_img.shape[:2]
-    slope = [None] *2
-    detect_code = [None] *2
+    slope = [None] * 2
+    detect_code = [0, 0]
   
     # 결과 저장용
     represent_points = [None] * 4
@@ -223,12 +224,7 @@ def regression(distriduted_lines, original_img):
             #오른쪽 차선 상단 점
             represent_points[1] = points[1]
             detect_code[0] = 1
-            
-        else:
-            detect_code[0] = 0
        
-
-
     # --------------- 왼쪽 차선 처리----------------
     left_pts = []
     if left_lines:
@@ -242,14 +238,10 @@ def regression(distriduted_lines, original_img):
             represent_points[2] = points[0]
             represent_points[3] = points[1]
             detect_code[1] = 1
-         
-        else:
-            detect_code[1] = 0
             
     if all (p is None for p in represent_points):
         return None, detect_code, slope
         
-
     return represent_points, detect_code, slope
 
 def compute_intersection(represent_points):
@@ -288,13 +280,20 @@ def compute_intersection(represent_points):
 
 def predicDir(detect_code, slope, vp, represent_points):
     
-    if represent_points is None or any(p is None for p in represent_points):
-        print("대표 점 중 None 있음 → undefined")
-        return "undefined"
-
-    if (detect_code[1] == 0) and (detect_code[0] == 0):
+    if (detect_code[0] == 0) and (detect_code[1] == 0):
         print("Undefined")
         return "undefined"
+    elif (detect_code[0] == 1):
+        if (slope[0] < 0):
+            return "left turn"
+        else:
+            return "right turn"
+    else:
+        if (slope[1] < 0):
+            return "left turn"
+        else:
+            return "right turn"
+
     
     thres_vp = 10.0  # 교차지점 임계값
     represent_x_center = (represent_points[1][0] - represent_points[3][0]) / 2
@@ -350,13 +349,13 @@ def draw_detected_lines(original_img, represent_points, vp=None):
 def compute_control(direction):
     if direction == "left turn":
         steering = -0.7
-        throttle = 0.15
+        throttle = 0.2
     elif direction == "right turn":
         steering = 0.4
-        throttle = 0.15
+        throttle = 0.2
     elif direction == "straight":
         steering = -0.25
-        throttle = 0.15
+        throttle = 0.2
     else:  # undefined
         steering = 0.0
         throttle = 0.0

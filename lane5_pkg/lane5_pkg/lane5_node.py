@@ -252,10 +252,26 @@ def separateLine(lines, original_img):
 
 #     return represent_points, detect_code, slope
 
-def curve(distributes_lines):
-	left_lines = np.polyfit((left_lines[0], left_lines[1]),2)
-	right_lines = np.polyfit((right_lines[0], right_lines[1]),2)
-	
+def curve(distributes_lines, original_img):
+	height = original_img[0]
+	left_curve = np.polyfit((left_lines[0], left_lines[1]),2)
+	right_curve = np.polyfit((right_lines[0], right_lines[1]),2)
+	plot_y = np.linspace(0,height-1,height) #이미지를 y좌표 값으로 나눔 [1,2,3 ...]
+
+	# 나눈 y값마다 x좌표 구함
+	left_curve_x = np.polyval(left_curve, plot_y).astype(np.int32)
+	right_curve_x = np.polyval(right_curve, plot_y).astype(np.int32)
+
+	#(x, y) 좌표 쌍 만들기
+	left_points = np.array([[x, y] for x, y in zip(left_curve_x, plot_y.astype(np.int32))])
+	right_points = np.array([[x, y] for x, y in zip(right_curve_x, plot_y.astype(np.int32))])
+	cv2.polylines(img, [left_points], isClosed=False, color=(255, 0, 0), thickness=5)
+	cv2.polylines(img, [right_points], isClosed=False, color=(0, 255, 255), thickness=5)
+
+	# 결과 출력
+	cv2.imshow("Lane Lines", img)
+	cv2.waitKey(0)
+	cv2.destroyAllWindows()
 # def compute_intersection(represent_points):
 #     if represent_points[0] is None or represent_points[1] is  None:
 #         print("오른쪽 차선 없음")
