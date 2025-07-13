@@ -39,10 +39,10 @@ class ImageSubscriber(Node):
             self.get_logger().info("차선 없음: 정지")
             self.publish_controls(0.0, 0.0)
 
-        # cv2.imshow("original", original_img)
-        # cv2.imshow("binary", binary)
+        cv2.imshow("original", original_img)
+        cv2.imshow("binary", binary)
         cv2.imshow("roi", img_mask)
-        # cv2.waitKey(1)
+        cv2.waitKey(1)
 
     def publish_controls(self, steering, throttle):
         # 이미 -1.0 ~ 1.0 범위면 변환 필요 없음

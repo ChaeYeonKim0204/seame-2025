@@ -25,7 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'lane3_node = lane3_pkg.lane3_node:main',
-            'control_node = control.control_node:main',
+            # 'control_node = control.control_node:main',
         ],
     },
 )

@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 from glob import glob
 import os
 
-package_name = 'lane3_pkg'
+package_name = 'lane4_pkg'
 
 setup(
     name=package_name,

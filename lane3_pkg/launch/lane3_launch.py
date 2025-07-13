@@ -104,10 +104,10 @@ def generate_launch_description():
             output='screen',
             # arguments=['--ros-args', '--log-level', 'debug']
         ),
-        Node(
-            package='control',
-            executable='control_node',
-            name='control_node',
-            output='screen'
-        ),
+        # Node(
+        #     package='control',
+        #     executable='control_node',
+        #     name='control_node',
+        #     output='screen'
+        # ),
     ])
