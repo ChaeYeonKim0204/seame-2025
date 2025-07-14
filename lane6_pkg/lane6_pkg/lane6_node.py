@@ -33,10 +33,6 @@ class ImageSubscriber(Node):
             represent_points, detect_code, slope = result
 
             vp = compute_intersection(represent_points)
-            if vp is None:
-                self.publish_controls(-0.23, 0.0)
-                return
-
             direction = predicDir(detect_code, slope, vp, represent_points)
             steering, throttle = compute_control(direction)
             self.publish_controls(steering, throttle)
@@ -79,8 +75,8 @@ def region_of_interest(binary):
     mask = np.zeros_like(binary)  #빈 마스크 생성 (검정색만 있는 이미지)
      
     bottom_width_percent = 1  # 하단 너비 비율
-    top_width_percent = 0.8 # 상단 너비 비율
-    height_percent = 0.9      # 높이 비율
+    top_width_percent = 0.6 # 상단 너비 비율
+    height_percent = 0.65      # 높이 비율
 
     bottom_left = (int(width * (0.5 - bottom_width_percent / 2)), height)
     bottom_right = (int(width * (0.5 + bottom_width_percent / 2)), height)
@@ -269,15 +265,16 @@ def regression(distributed_lines, original_img):
     if all (p is None for p in represent_points):
         return None, detect_code, slope
         
+    print(f"대표차선 좌표: {represent_points}")    
     return represent_points, detect_code, slope
 
 def compute_intersection(represent_points):
     if represent_points[0] is None or represent_points[1] is  None:
-        print("오른쪽 차선 없음")
+        # print("오른쪽 차선 없음")
         return None
     
     elif represent_points[2] is None or represent_points[3] is None:
-        print("왼쪽 차선 없음")
+        # print("왼쪽 차선 없음")
         return None
 
     # 오른쪽 차선 기울기, y 절편 구하기
@@ -298,6 +295,7 @@ def compute_intersection(represent_points):
     # 연립방정식으로 교점 구하기
     try:
         vp = np.linalg.solve(A,B)
+        print(f"{vp}")
         return tuple(vp)
             
     except np.linalg.LinAlgError:
@@ -307,27 +305,29 @@ def compute_intersection(represent_points):
 
 def predicDir(detect_code, slope, vp, represent_points):
 
+    print(f"{detect_code}")
+
+    if ((detect_code[0] == 0) and (detect_code[1] == 0)):
+        print("둘 다 검출 안됨 Undefined")
+        return "undefined"
+    elif (detect_code[1] == 0):
+        if (slope[0] < 0):
+            print("왼쪽없고 기울기 음수 right turn")
+            return "right turn"
+        else:
+            print("왼쪽없고 기울기 양수 left turn")
+            return "left turn"
+    elif ((detect_code[0] == 0)):
+        if (slope[1] < 0):
+            print("오른쪽 없고 기울기 음수 right turn")
+            return "right turn"
+        else:
+            print("오른쪽 없고 기울기 양수 left turn")
+            return "left turn"
+
     if represent_points is None or any(p is None for p in represent_points):
         print("대표 점 중 None 있음 → undefined")
         return "undefined"
-
-    if (detect_code[0] == 0) and (detect_code[1] == 0):
-        print("Undefined")
-        return "undefined"
-    elif (detect_code[0] == 1) and (detect_code[1] == 0):
-        if (slope[0] < 0):
-            print("왼쪽없고 기울기 음수 left turn")
-            return "left turn"
-        else:
-            print("왼쪽없고 기울기 양수 right turn")
-            return "right turn"
-    elif ((detect_code[0] == 0) and detect_code[1] == 1):
-        if (slope[1] < 0):
-            print("오른쪽 없고 기울기 음수 left turn")
-            return "left turn"
-        else:
-            print("오른쪽 없고 기울기 양수 left turn")
-            return "right turn"
         
     if (represent_points[1] is None or represent_points[3] is None):
         print("대표 점 부족 → 방향 판단 불가")
@@ -340,56 +340,26 @@ def predicDir(detect_code, slope, vp, represent_points):
 
     if (detect_code[1] == 1 and detect_code[0] == 1):
         if (abs(difference)) < 1:
-            print("straight")
+            print("둘 다 검출 평행 straight")
             return "straight"
-        elif vp[0] > represent_x_center:
+        elif vp[0] < represent_x_center:
             print("둘 다 검출 left turn")
             return "left turn"
-        elif vp[0] < represent_x_center:
+        elif vp[0] > represent_x_center:
             print("둘 다 검출 right turn")
             return "right turn"
         else:
             print("둘 다 검출 straight")
             return "straight"
-
-    # elif detect_code[1] == 1:
-    #     print("right turn")
-    #     return "right turn"
-    # elif detect_code[0] == 1:
-    #     print("left turn")
-    #     return "left turn"
-    # else:
-    #     print("Undefined")
-    #     return "undefined"
     
     print(f"교점과 중심 차이: {vp[0]-represent_x_center}")
-               
-def draw_detected_lines(original_img, represent_points, vp=None):
-    # 복사본 만들기
-    img = original_img.copy()
-
-    # 대표 차선 좌표가 있을 때만 그림
-    # 오른쪽 차선 (파란색)
-    if represent_points[0] and represent_points[1]:
-        cv2.line(img, represent_points[0], represent_points[1], (255, 0, 0), 3)
-
-    # 왼쪽 차선 (초록색)
-    if represent_points[2] and represent_points[3]:
-        cv2.line(img, represent_points[2], represent_points[3], (0, 255, 0), 3)
-
-    # 교차점 (빨간 점)
-    if vp is not None:
-        vp_point = (int(vp[0]), int(vp[1]))
-        cv2.circle(img, vp_point, 8, (0, 0, 255), -1)
-
-    return img
     
 def compute_control(direction):
     if direction == "left turn":
-        steering = -0.5
+        steering = -0.4
         throttle = 0.2
     elif direction == "right turn":
-        steering = 0.2
+        steering = 0.1
         throttle = 0.2
     elif direction == "straight":
         steering = -0.23
