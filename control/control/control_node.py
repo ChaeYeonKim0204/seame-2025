@@ -1,41 +1,65 @@
-# piracer_demo/control_node.py
-
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, String
 from piracer.vehicles import PiRacerPro
-
 
 class ControlNode(Node):
     def __init__(self):
         super().__init__('control_node')
         self.piracer = PiRacerPro()
-        self.throttle = 0
-        self.steering = 0
-        
-        self.subscription = self.create_subscription(
-            Float32,
-            '/throttle',
-            self.throttle_callback,
+        self.mode = "auto"
+        self.throttle = 0.0
+        self.steering = 0.0
+
+        # 모드 구독
+        self.mode_sub = self.create_subscription(
+            String,
+            'mode',
+            self.mode_callback,
             10
         )
-        self.subscription = self.create_subscription(
+
+        # 수동 조종 명령 구독 (평상시엔 무시)
+        self.manual_throttle_sub = self.create_subscription(
             Float32,
-            '/steering',
-            self.steering_callback,
+            '/manual_throttle',
+            self.manual_throttle_callback,
             10
         )
-        self.timer = self.create_timer(0.2, self.timer_callback)  # 10Hz
+        self.manual_steering_sub = self.create_subscription(
+            Float32,
+            '/manual_steering',
+            self.manual_steering_callback,
+            10
+        )
+
+        # 자동 조종을 위한 타이머 (0.2초 주기)
+        self.timer = self.create_timer(0.2, self.timer_callback)
+
+    def mode_callback(self, msg: String):
+        self.mode = msg.data
+        self.get_logger().info(f'Mode switched to: {self.mode}')
+        if self.mode == "auto":
+            # 자동모드 진입 시 초기화(예시)
+            self.throttle = 0.2  # 예: 자동 주행 기본 throttle 값
+            self.steering = -0.23
+        else:
+            # 수동 모드 시 초기 throttle, steering 0으로 초기화 (옵션)
+            self.throttle = 0.0
+            self.steering = -0.23
+
+    def manual_throttle_callback(self, msg: Float32):
+        if self.mode == "manual":
+            self.throttle = msg.data
+
+    def manual_steering_callback(self, msg: Float32):
+        if self.mode == "manual":
+            self.steering = msg.data
 
     def timer_callback(self):
-        self.piracer.set_steering_percent(self.steering)
+        # 매 0.2초마다 piracer에 현재 throttle/steering값 적용
         self.piracer.set_throttle_percent(self.throttle)
-
-    def throttle_callback(self, throttle_msg: Float32):
-        self.throttle = throttle_msg.data
-
-    def steering_callback(self, steering_msg: Float32):
-        self.steering = steering_msg.data
+        self.piracer.set_steering_percent(self.steering)
 
 def main(args=None):
     rclpy.init(args=args)
@@ -49,3 +73,6 @@ def main(args=None):
         node.piracer.set_steering_percent(0.0)
         node.destroy_node()
         rclpy.shutdown()
+
+if __name__ == "__main__":
+		main()
