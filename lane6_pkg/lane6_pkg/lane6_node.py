@@ -15,6 +15,8 @@ class ImageSubscriber(Node):
         self.steering_pub = self.create_publisher(Float32, '/steering', 10)
         self.throttle_pub = self.create_publisher(Float32, '/throttle', 10)
         self.cb = CvBridge()
+        self.prev_vp = None
+        self.prev_steer = 0.0  # 직진 = 0 기준으로 변경
 
     def callback(self, msg):
         original_img = self.cb.imgmsg_to_cv2(msg, "bgr8")
@@ -26,16 +28,41 @@ class ImageSubscriber(Node):
         if lines:
             distributed_lines = separateLine(lines, original_img)
             result = regression(distributed_lines, original_img)
-            
-            if result[0] is None:
-                self.publish_controls(-0.23, 0.0)
+
+            if result is not None:
+                if result[0] is None:
+                    self.publish_controls(-0.23, 0.0)
+                    return
+            else:
                 return
+
             represent_points, detect_code, slope = result
 
             vp = compute_intersection(represent_points)
-            direction = predicDir(detect_code, slope, vp, represent_points)
-            steering, throttle = compute_control(direction)
-            self.publish_controls(steering, throttle)
+
+            if vp is not None:
+                self.prev_vp = vp  # 새 교점이면 업데이트
+            elif self.prev_vp is not None:
+                vp = self.prev_vp  # 없으면 이전꺼 사용
+            else:
+                self.publish_controls(-0.23, 0.0)
+                return
+
+            vp_vehicle = convert_vp_to_vehicle_coords(vp, original_img.shape)
+            target_heading = compute_target_heading(vp_vehicle)
+            current_heading = compute_current_heading(self.prev_steer)
+            delta_heading = compute_steering_angle(target_heading, current_heading)
+            steering = steering_angle_to_steer(delta_heading)
+            self.prev_steer = steering  # 내부는 0 기준 유지
+            real_steer = steering - 0.23  # 실제 퍼블리시할 값
+
+            print(f"[DEBUG] vp: {vp}, vehicle_coords: {vp_vehicle}")
+            print(f"[DEBUG] target_heading: {math.degrees(target_heading):.2f} deg")
+            print(f"[DEBUG] delta_heading: {math.degrees(delta_heading):.2f} deg")
+            print(f"[DEBUG] steering (real): {real_steer:.3f}")
+
+            throttle = 0.25 if abs(real_steer) < 0.4 else 0.25
+            self.publish_controls(real_steer, throttle)
         else:
             self.publish_controls(-0.23, 0.0)
 
@@ -145,7 +172,7 @@ def apply_canny(result, low_thresh=100, high_thresh=200):
 
 # 허프 변환에 새로운 함수 추가 
 def houghLines(canny_img):
-    lines = cv2.HoughLinesP(canny_img , rho=1, theta = np.pi/180, threshold=30, minLineLength=10, maxLineGap=5)
+    lines = cv2.HoughLinesP(canny_img , rho=1, theta = np.pi/180, threshold=30, minLineLength=15, maxLineGap=10)
             
     # 직선이 감지되면
     if lines is not None:
@@ -165,6 +192,16 @@ def separateLine(lines, original_img):
     if not lines:
         return [[], []]
 
+    # 가중 평균 중심 계산
+    x_coords = []
+    weights = []
+    for x1, y1, x2, y2 in lines:
+        x_coords.extend([x1, x2])
+        weights.extend([y1, y2])  # 아래쪽 점일수록 더 중요한 선으로 간주
+
+    x_center = int(np.average(x_coords, weights=weights))
+    # print(f"[DEBUG] 동적 x_center (가중 평균): {x_center}")
+
     for i in lines:
         x1, y1, x2, y2 = i
 
@@ -183,13 +220,11 @@ def separateLine(lines, original_img):
 
         slope = dy / dx
 
-        # 오른쪽 차선
-        if slope > 0 and x1 > x_center:
-            right_lines.append(i)
-
-        # 왼쪽 차선
-        elif slope < 0 and x1 < x_center:
-            left_lines.append(i)
+        # 중심선을 기준으로 양쪽에 위치한 선을 분리
+        if x1 < x_center and x2 < x_center:
+            left_lines.append([x1, y1, x2, y2])
+        elif x1 > x_center and x2 > x_center:
+            right_lines.append([x1, y1, x2, y2])
 
     return [right_lines, left_lines]
 
@@ -301,73 +336,44 @@ def compute_intersection(represent_points):
     except np.linalg.LinAlgError:
         print("두 직선은 평행하거나 일치하여 교점을 찾을 수 없습니다.")
         return None
-    
 
-def predicDir(detect_code, slope, vp, represent_points):
+# 새로운 좌표계 변환 및 기하 계산 함수들 유지:
+def convert_vp_to_vehicle_coords(vp, image_shape):
+    img_w, img_h = image_shape[1], image_shape[0]
+    x_vehicle = ((vp[0] - img_w / 2) / img_w) * 0.8
+    y_vehicle = ((img_h - vp[1]) / img_h) * 1.2
+    return np.array([x_vehicle, y_vehicle])
 
-    print(f"{detect_code}")
+def compute_target_heading(vp_vehicle):
+    target_heading = math.atan2(vp_vehicle[1], vp_vehicle[0])  # → x축 기준
+    target_heading -= math.pi / 2  # → y축 기준으로 보정    
+    return target_heading
 
-    if ((detect_code[0] == 0) and (detect_code[1] == 0)):
-        print("둘 다 검출 안됨 Undefined")
-        return "undefined"
-    elif (detect_code[1] == 0):
-        if (slope[0] < 0):
-            print("왼쪽없고 기울기 음수 right turn")
-            return "right turn"
-        else:
-            print("왼쪽없고 기울기 양수 left turn")
-            return "left turn"
-    elif ((detect_code[0] == 0)):
-        if (slope[1] < 0):
-            print("오른쪽 없고 기울기 음수 right turn")
-            return "right turn"
-        else:
-            print("오른쪽 없고 기울기 양수 left turn")
-            return "left turn"
+def compute_current_heading(prev_steer, max_angle=math.radians(45)):
+    """
+    prev_steer: 실제 조향 값 (-1.23 ~ 1.0, 직진은 -0.23)
+    max_angle: 기하학적 최대 조향 각도
+    """
+    if prev_steer >= -0.23:
+        normalized = (prev_steer + 0.23) / (1.0 + 0.23)  # 우회전 영역
+    else:
+        normalized = (prev_steer + 0.23) / (1.23 - 0.23)  # 좌회전 영역
+    heading_rad = normalized * max_angle
+    return heading_rad
 
-    if represent_points is None or any(p is None for p in represent_points):
-        print("대표 점 중 None 있음 → undefined")
-        return "undefined"
-        
-    if (represent_points[1] is None or represent_points[3] is None):
-        print("대표 점 부족 → 방향 판단 불가")
-        return "undefined"
-    
-    thres_vp = 10.0  # 교차지점 임계값
-    represent_x_center = (represent_points[1][0] + represent_points[3][0]) / 2
-    print("검출한 직선 x좌표 중심", represent_x_center)
-    difference = abs(slope[1]) - abs(slope[0])
+def compute_steering_angle(target_heading, current_heading):
+    delta_rad = target_heading - current_heading
+    delta_rad = (delta_rad + math.pi) % (2 * math.pi) - math.pi
+    return delta_rad
 
-    if (detect_code[1] == 1 and detect_code[0] == 1):
-        if (abs(difference)) < 1:
-            print("둘 다 검출 평행 straight")
-            return "straight"
-        elif vp[0] < represent_x_center:
-            print("둘 다 검출 left turn")
-            return "left turn"
-        elif vp[0] > represent_x_center:
-            print("둘 다 검출 right turn")
-            return "right turn"
-        else:
-            print("둘 다 검출 straight")
-            return "straight"
-    
-    print(f"교점과 중심 차이: {vp[0]-represent_x_center}")
-    
-def compute_control(direction):
-    if direction == "left turn":
-        steering = -0.4
-        throttle = 0.2
-    elif direction == "right turn":
-        steering = 0.1
-        throttle = 0.2
-    elif direction == "straight":
-        steering = -0.23
-        throttle = 0.2
-    else:  # undefined
-        steering = 0.0
-        throttle = 0.0
-    return steering, throttle
+def steering_angle_to_steer(delta_rad, max_angle=math.radians(45)):
+    normalized = delta_rad / max_angle
+    normalized = np.clip(normalized, -1.0, 1.0)
+    normalized *= 0.8
+    if normalized >= 0:
+        return normalized * (1.0 + 0.23) - 0.23
+    else:
+        return normalized * (1.23 - 0.23) - 0.23
 
 
 if __name__ == "__main__":

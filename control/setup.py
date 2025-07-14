@@ -23,7 +23,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'control_node = control.control_node:main',
+        'manual_control_node = control.manual_control_node:main',
+        'mode_switch_node = control.mode_switch_node:main',
+        'control_node = control.control_node:main',
         ],
     },
 )
