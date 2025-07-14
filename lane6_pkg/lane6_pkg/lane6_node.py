@@ -1,5 +1,3 @@
-#찐최
-
 import rclpy as rp
 from rclpy.node import Node
 from sensor_msgs.msg import Image
@@ -8,6 +6,7 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 from rclpy.qos import qos_profile_sensor_data
+import math
 
 class ImageSubscriber(Node):
     def __init__(self):
@@ -26,17 +25,27 @@ class ImageSubscriber(Node):
         lines = houghLines(canny_img)
         if lines:
             distributed_lines = separateLine(lines, original_img)
-            represent_points, detect_code, slope = regression(distributed_lines, original_img)
+            result = regression(distributed_lines, original_img)
+            
+            if result[0] is None:
+                self.publish_controls(-0.23, 0.0)
+                return
+            represent_points, detect_code, slope = result
+
             vp = compute_intersection(represent_points)
+            if vp is None:
+                self.publish_controls(-0.23, 0.0)
+                return
+
             direction = predicDir(detect_code, slope, vp, represent_points)
             steering, throttle = compute_control(direction)
             self.publish_controls(steering, throttle)
         else:
-            self.publish_controls(0.0, 0.0)
+            self.publish_controls(-0.23, 0.0)
 
     def publish_controls(self, steering, throttle):
         msg_s = Float32()
-        msg_s.data = float(np.clip(steering, -1.0, 1.0))
+        msg_s.data = float(np.clip(steering, -1.23, 1.0))
         self.steering_pub.publish(msg_s)
 
         msg_t = Float32()
@@ -70,7 +79,7 @@ def region_of_interest(binary):
     mask = np.zeros_like(binary)  #빈 마스크 생성 (검정색만 있는 이미지)
      
     bottom_width_percent = 1  # 하단 너비 비율
-    top_width_percent = 0.5 # 상단 너비 비율
+    top_width_percent = 0.8 # 상단 너비 비율
     height_percent = 0.9      # 높이 비율
 
     bottom_left = (int(width * (0.5 - bottom_width_percent / 2)), height)
@@ -132,8 +141,8 @@ def apply_canny(result, low_thresh=100, high_thresh=200):
     ROI 마스크 이미지에 Canny Edge Detection 적용
     """
     canny = cv2.Canny(result, low_thresh, high_thresh)
-    cv2.imshow("Canny Edge", canny)
-    cv2.waitKey(1)
+    # cv2.imshow("Canny Edge", canny)
+    # cv2.waitKey(1)
     # cv2.destroyAllWindows()
     return canny
 
@@ -144,8 +153,7 @@ def houghLines(canny_img):
             
     # 직선이 감지되면
     if lines is not None:
-        print("직선 검출 완료")
-        
+        # print("직선 검출 완료")
         # x1, y1, x2, y2을 반환
         return [line[0].tolist() for line in lines] 
     return []
@@ -159,49 +167,69 @@ def separateLine(lines, original_img):
     x_center = width / 2
 
     if not lines:
-         return [[],[]]
+        return [[], []]
+
     for i in lines:
-        x1,y1,x2,y2 = i
+        x1, y1, x2, y2 = i
 
-        if x2 - x1 == 0:
-            print("정지선")
+        dx = x2 - x1
+        dy = y2 - y1
 
-        fit = np.polyfit((x1,x2),(y1,y2),1)
-        slope = fit[0]
-        
-        # 오른쪽 차선 판별
+        if dx == 0:
+            # 수직선: slope는 무한대 → 차선으로 쓰기 애매 → 무시
+            # print("수직선 (x1 == x2), 무시")
+            continue
+
+        if dy == 0:
+            # 수평선 → 정지선일 가능성 높음
+            # print("수평선 (y1 == y2), 정지선 후보")
+            continue
+
+        slope = dy / dx
+
+        # 오른쪽 차선
         if slope > 0 and x1 > x_center:
             right_lines.append(i)
-            right_detect = 1
 
-        # 왼쪽 차선 판별
-        elif slope < 0 and x1< x_center:
+        # 왼쪽 차선
+        elif slope < 0 and x1 < x_center:
             left_lines.append(i)
-            left_detect = 1
 
     return [right_lines, left_lines]
+
+
+def safe_slope(vx, vy, epsilon=1e-6):
+    if abs(vx[0]) < epsilon:
+        # 수직선 또는 수직에 가까운 선
+        return float('inf')
+    else:
+        return vy[0] / vx[0]
         
 #기울기와 직선의 시작점과 끝점좌표 반환
-def fit_line(original_img,distributed_lines, fin_y=100):  #distributed_lines -> cv2.fitLine() 함수에 넣을 좌표들
-    height = original_img.shape[0]
-    if len(distributed_lines) < 2:
+def fit_line(original_img, pts, fin_y=100):  #distributed_lines -> cv2.fitLine() 함수에 넣을 좌표들
+    if len(pts) < 2:
         return None, None
+    
+    height = original_img.shape[0]
 
-    vx, vy, x0, y0 = cv2.fitLine(np.array(distributed_lines), cv2.DIST_L2, 0, 0.01, 0.01)
-    slope = vy[0] / vx[0]
-    base_point = (x0[0], y0[0])
+    vx, vy, x0, y0 = cv2.fitLine(np.array(pts), cv2.DIST_L2, 0, 0.01, 0.01)
+    slope = safe_slope(vx, vy)
 
-    init_x = int(((height - base_point[1]) / slope) + base_point[0])
-    fin_x = int(((fin_y - base_point[1]) / slope) + base_point[0])
+    if math.isinf(slope):
+        init_x = int(x0[0])
+        fin_x = int(x0[0])
+    else:
+        init_x = int(((height - y0[0]) / slope) + x0[0])
+        fin_x = int(((fin_y - y0[0]) / slope) + x0[0])
 
     return slope, [(init_x, height), (fin_x, fin_y)]
 
 # 대표 직선 검출
-def regression(distriduted_lines, original_img):
-    right_lines, left_lines = distriduted_lines
+def regression(distributed_lines, original_img):
+    right_lines, left_lines = distributed_lines
     height, width = original_img.shape[:2]
-    slope = [None] *2
-    detect_code = [None] *2
+    slope = [None] * 2
+    detect_code = [0, 0]
   
     # 결과 저장용
     represent_points = [None] * 4
@@ -223,12 +251,7 @@ def regression(distriduted_lines, original_img):
             #오른쪽 차선 상단 점
             represent_points[1] = points[1]
             detect_code[0] = 1
-            
-        else:
-            detect_code[0] = 0
        
-
-
     # --------------- 왼쪽 차선 처리----------------
     left_pts = []
     if left_lines:
@@ -242,14 +265,10 @@ def regression(distriduted_lines, original_img):
             represent_points[2] = points[0]
             represent_points[3] = points[1]
             detect_code[1] = 1
-         
-        else:
-            detect_code[1] = 0
             
     if all (p is None for p in represent_points):
         return None, detect_code, slope
         
-
     return represent_points, detect_code, slope
 
 def compute_intersection(represent_points):
@@ -287,17 +306,35 @@ def compute_intersection(represent_points):
     
 
 def predicDir(detect_code, slope, vp, represent_points):
-    
+
     if represent_points is None or any(p is None for p in represent_points):
         print("대표 점 중 None 있음 → undefined")
         return "undefined"
 
-    if (detect_code[1] == 0) and (detect_code[0] == 0):
+    if (detect_code[0] == 0) and (detect_code[1] == 0):
         print("Undefined")
+        return "undefined"
+    elif (detect_code[0] == 1) and (detect_code[1] == 0):
+        if (slope[0] < 0):
+            print("왼쪽없고 기울기 음수 left turn")
+            return "left turn"
+        else:
+            print("왼쪽없고 기울기 양수 right turn")
+            return "right turn"
+    elif ((detect_code[0] == 0) and detect_code[1] == 1):
+        if (slope[1] < 0):
+            print("오른쪽 없고 기울기 음수 left turn")
+            return "left turn"
+        else:
+            print("오른쪽 없고 기울기 양수 left turn")
+            return "right turn"
+        
+    if (represent_points[1] is None or represent_points[3] is None):
+        print("대표 점 부족 → 방향 판단 불가")
         return "undefined"
     
     thres_vp = 10.0  # 교차지점 임계값
-    represent_x_center = (represent_points[1][0] - represent_points[3][0]) / 2
+    represent_x_center = (represent_points[1][0] + represent_points[3][0]) / 2
     print("검출한 직선 x좌표 중심", represent_x_center)
     difference = abs(slope[1]) - abs(slope[0])
 
@@ -305,25 +342,25 @@ def predicDir(detect_code, slope, vp, represent_points):
         if (abs(difference)) < 1:
             print("straight")
             return "straight"
-        elif vp[0] < represent_x_center:
-            print("left turn")
-            return "left turn"
         elif vp[0] > represent_x_center:
-            print("right turn")
+            print("둘 다 검출 left turn")
+            return "left turn"
+        elif vp[0] < represent_x_center:
+            print("둘 다 검출 right turn")
             return "right turn"
         else:
-            print("straight")
+            print("둘 다 검출 straight")
             return "straight"
 
-    elif detect_code[1] == 1:
-        print("right turn")
-        return "right turn"
-    elif detect_code[0] == 1:
-        print("left turn")
-        return "left turn"
-    else:
-        print("Undefined")
-        return "undefined"
+    # elif detect_code[1] == 1:
+    #     print("right turn")
+    #     return "right turn"
+    # elif detect_code[0] == 1:
+    #     print("left turn")
+    #     return "left turn"
+    # else:
+    #     print("Undefined")
+    #     return "undefined"
     
     print(f"교점과 중심 차이: {vp[0]-represent_x_center}")
                
@@ -349,14 +386,14 @@ def draw_detected_lines(original_img, represent_points, vp=None):
     
 def compute_control(direction):
     if direction == "left turn":
-        steering = -0.7
-        throttle = 0.15
+        steering = -0.5
+        throttle = 0.2
     elif direction == "right turn":
-        steering = 0.4
-        throttle = 0.15
+        steering = 0.2
+        throttle = 0.2
     elif direction == "straight":
-        steering = -0.25
-        throttle = 0.15
+        steering = -0.23
+        throttle = 0.2
     else:  # undefined
         steering = 0.0
         throttle = 0.0
@@ -365,30 +402,3 @@ def compute_control(direction):
 
 if __name__ == "__main__":
     main()
-
-    # # --- 이미지 파일 테스트 추가 ---
-    # img = cv2.imread("C:/line6.jpg")
-    # scale_percent = 50
-    # width = int(img.shape[1] * scale_percent / 100)
-    # height = int(img.shape[0] * scale_percent / 100)
-    # dim = (width, height)
-    # original_img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
-
-    # binary = filter_colors(original_img)
-    # img_mask = region_of_interest(binary)
-    # result = selective_erosion(img_mask)
-    # canny_img = apply_canny(result)
-    # lines = houghLines(canny_img)
-
-    # if lines:
-    #     distributed_lines = separateLine(lines, original_img)
-    #     represent_points, detect_code, slope = regression(distributed_lines, original_img)
-    #     vp = compute_intersection(represent_points)
-    #     direction = predicDir(detect_code, slope, vp, represent_points)  # ⬅️ 여기에 방향 변수 반영
-    #     print("Direction:", direction)
-    #     result_img = draw_detected_lines(original_img, represent_points, vp)
-    #     cv2.imshow("Detected Lines", result_img)
-    #     cv2.waitKey(0)
-    #     cv2.destroyAllWindows()
-    # else:
-    #     print("No lines detected")
