@@ -16,7 +16,7 @@ class ManualControlNode(Node):
 
         # 게임패드, 차량 초기화
         self.gamepad = ShanWanGamepad()
-        self.car = PiRacerPro()
+        # self.car = PiRacerPro()
         # self.mode = "auto"  # 초기 모드는 auto
 
         # pygame 초기화
@@ -61,13 +61,13 @@ class ManualControlNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ManualControlNode()
-    node.car.set_throttle_percent(0)
+    # node.car.set_throttle_percent(0)
 
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.car.set_throttle_percent(0)
-        node.car.set_steering_percent(0)
+        # node.car.set_throttle_percent(0)
+        # node.car.set_steering_percent(0)
         print("프로그램 종료")
 
 if __name__ == '__main__':

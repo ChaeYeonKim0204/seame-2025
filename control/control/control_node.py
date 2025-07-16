@@ -47,20 +47,11 @@ class ControlNode(Node):
             10
         )
 
-        # 자동 조종을 위한 타이머 (0.02초 주기)
-        self.timer = self.create_timer(0.02, self.timer_callback)
+        self.timer = self.create_timer(0.2, self.timer_callback)
 
     def mode_callback(self, msg: String):
         self.mode = msg.data
         self.get_logger().info(f'Mode switched to: {self.mode}')
-        if self.mode == "auto":
-            # 자동모드 진입 시 초기화(예시)
-            self.throttle = 0.2  # 예: 자동 주행 기본 throttle 값
-            self.steering = -0.23
-        else:
-            # 수동 모드 시 초기 throttle, steering 0으로 초기화 (옵션)
-            self.throttle = 0.0
-            self.steering = -0.23
 
     def manual_throttle_callback(self, msg: Float32):
         if self.mode == "manual":
@@ -80,8 +71,8 @@ class ControlNode(Node):
             self.steering = msg.data
 
     def timer_callback(self):
-        if self.mode == "auto" and self.throttle == 0.0:
-            self.get_logger().warn("자동주행 모드지만 throttle 값이 아직 안 들어옴")  # 추가함
+        # if self.mode == "auto" and self.throttle == 0.0:
+        #     self.get_logger().warn("자동주행 모드지만 throttle 값이 아직 안 들어옴")  # 추가함
         
         self.piracer.set_throttle_percent(self.throttle)
         self.piracer.set_steering_percent(self.steering)
