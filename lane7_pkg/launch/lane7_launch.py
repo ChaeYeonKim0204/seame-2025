@@ -91,16 +91,16 @@ def generate_launch_description():
                 {"camera_id": 0},  # /dev/video0
                 {"image_width": 1280},
                 {"image_height": 720},
-                {"fps": 10.0},
+                {"fps": 30.0},
                 {"frame_id": "camera"},
                 {"camera_calibration_file": ""}
             ]
         ),
         Node(
-            package='lane5_pkg',
-            executable='lane5_node',
-            namespace='/lane5',
-            name='lane5_node',
+            package='lane7_pkg',
+            executable='lane7_node',
+            namespace='/lane7',
+            name='lane7_node',
             output='screen',
             # arguments=['--ros-args', '--log-level', 'debug']
         ),
