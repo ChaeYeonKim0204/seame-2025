@@ -42,15 +42,17 @@ class ImageSubscriber(Node):
             else:
                 return
 
-            represent_points, detect_code, slope = result            
-            center_fitx = compute_intersection(represent_points, original_img)
+            represent_points, detect_code, slope = result
 
-            predic_result = predicDir(center_fitx, represent_points)
-
-            if predic_result is None:
-                self.steering, self.throttle = 0.0, 0.0
+        
+            if center_fitx is not None:
+                predic_result = self.predicDir(center_fitx, represent_points)
+                if predic_result is None:
+                    self.steering, self.throttle = 0.0, 0.0
+                else:
+                    self.steering, self.throttle = predic_result
             else:
-                self.steering, self.throttle = predic_result
+                self.steering, self.throttle = 0.0, 0.0
 
             self.publish_controls(self.steering, self.throttle)
         else:
@@ -99,7 +101,7 @@ def region_of_interest(binary):
     mask = np.zeros_like(binary)  #빈 마스크 생성 (검정색만 있는 이미지)
      
     bottom_width_percent = 1  # 하단 너비 비율
-    top_width_percent = 0.5 # 상단 너비 비율
+    top_width_percent = 0.8 # 상단 너비 비율
     height_percent = 0.9      # 높이 비율
 
     bottom_left = (int(width * (0.5 - bottom_width_percent / 2)), height)
@@ -113,9 +115,9 @@ def region_of_interest(binary):
     cv2.fillPoly(mask, polygon, 255)
     img_mask = cv2.bitwise_and(binary, mask)
 
-    # cv2.imshow("roi Image", img_mask) 
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    #cv2.imshow("roi Image", img_mask) 
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
 
     return img_mask
 
@@ -187,7 +189,7 @@ def separateLine(lines, original_img):
     if not lines:
         return [[], []]
 
-    x_center = original_img.shape[1]
+    x_center = original_img.shape[1] /2
    
         # 중심선을 기준으로 양쪽에 위치한 선을 분리
     for x1, y1, x2, y2 in lines:
@@ -195,8 +197,11 @@ def separateLine(lines, original_img):
             left_lines.append([x1, y1, x2, y2])
         elif x1 > x_center and x2 > x_center:
             right_lines.append([x1, y1, x2, y2])
-            
+    
+    print(f"[right_lines: {right_lines}, left_lines: {left_lines}]")      
     return [right_lines, left_lines]
+    
+
 
         
 #기울기와 직선의 시작점과 끝점좌표 반환
@@ -294,12 +299,12 @@ def compute_intersection(represent_points, original_img):
     left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
     right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
 
-    center_fitx = (left_fitx + right_fitx) / 2
+    center_fitx_array = (left_fitx + right_fitx) / 2
     
     target_y = int(height * 0.6)
-    target_x = int(center_fitx[target_y])
+    target_x = int(center_fitx_array[target_y])
     center_fitx = target_x
-
+   
     return center_fitx
    
 
