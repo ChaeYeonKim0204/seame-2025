@@ -110,4 +110,16 @@ def generate_launch_description():
             name='control_node',
             output='screen'
         ),
+                Node(
+            package='control',
+            executable='manual_control_node',
+            name='manual_control_node',
+            output='screen'
+        ),
+        Node(
+            package='control',
+            executable='mode_switch_node',
+            name='mode_switch_node',
+            output='screen'
+        ),
     ])
