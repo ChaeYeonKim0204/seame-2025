@@ -26,6 +26,8 @@ setup(
         'console_scripts': [
             'lane4_node = lane4_pkg.lane4_node:main',
             'control_node = control.control_node:main',
+            'manual_control_node = control.manual_control_node:main',
+            'mode_switch_node = control.mode_switch_node:main',
         ],
     },
 )
