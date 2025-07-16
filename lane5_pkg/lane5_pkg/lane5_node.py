@@ -44,9 +44,11 @@ class ImageSubscriber(Node):
 
             represent_points, detect_code, slope = result
 
+            center_fitx = compute_intersection(represent_points, original_img)
+            # predic_result = predicDir(center_fitx, represent_points)
         
             if center_fitx is not None:
-                predic_result = self.predicDir(center_fitx, represent_points)
+                predic_result = predicDir(self, center_fitx, represent_points)
                 if predic_result is None:
                     self.steering, self.throttle = 0.0, 0.0
                 else:
@@ -69,17 +71,18 @@ class ImageSubscriber(Node):
         
 def main():
     rp.init()
-    pid = PID(0.5, 0.01, 0.05, setpoint=0)
+    pid = PID(0.01, 0.001, 0.001, setpoint=0)
     cfg = {
-        'PID_P': 0.5,
-        'PID_I': 0.01,
-        'PID_D': 0.05,
+        'PID_P': 0.01,
+        'PID_I': 0.001,
+        'PID_D': 0.001,
         'target_threshold': 20,
-        'throttle_min': 0.1,
+        'throttle_min': 0.2,
         'throttle_max': 0.3,
         'delta_th': 0.02
     }
     image_subscriber = ImageSubscriber(pid, cfg)
+    
     rp.spin(image_subscriber)
     image_subscriber.destroy_node()
     rp.shutdown()
