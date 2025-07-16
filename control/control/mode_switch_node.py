@@ -10,12 +10,13 @@ class ModeSwitchNode(Node):
         self.mode = "auto"
 
         pygame.init()
+        pygame.joystick.quit()          # 이전 상태 정리(추가)
         pygame.joystick.init()
         if pygame.joystick.get_count() == 0:
             self.get_logger().error("조이스틱이 연결되어 있지 않습니다!")
             exit(1)
         else:
-            self.get_logger().info("조이스틱이 연결되었습니다!")  # 여기 추가
+            self.get_logger().info("조이스틱이 연결되었습니다!") 
 
         self.joystick = pygame.joystick.Joystick(0)
         self.joystick.init()
