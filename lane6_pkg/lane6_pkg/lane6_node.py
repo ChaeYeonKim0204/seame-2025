@@ -12,7 +12,7 @@ import time
 class ImageSubscriber(Node):
     def __init__(self):
         super().__init__('image_subscriber')
-        self.subscription = self.create_subscription(Image, '/camera/image', self.callback, qos_profile_sensor_data)
+        self.subscription = self.create_subscription(Image, '/camera/image_raw', self.callback, qos_profile_sensor_data)
         self.steering_pub = self.create_publisher(Float32, '/steering', 10)
         self.throttle_pub = self.create_publisher(Float32, '/throttle', 10)
         self.cb = CvBridge()
@@ -120,23 +120,20 @@ def apply_canny(result, low_thresh=100, high_thresh=200):
 def detect_line_segments(canny_img):
     lines = cv2.HoughLinesP(canny_img , rho=1, theta = np.pi/180, threshold=30, minLineLength=10, maxLineGap=5)
             
-    # 직선이 감지되면
-    if lines is not None:
-        # print("직선 검출 완료")
-        # x1, y1, x2, y2을 반환
-        return [line[0].tolist() for line in lines] 
-    
-    return []
+    return lines 
 
 # 오른쪽, 왼쪽 차선 분리
 def separateLine(lines, original_img):    
-    if not lines:
-        return [[], []]
+    lane_lines = []
+
+    if lines is None:
+        print("no line segments detected")
+        return lane_lines
+
 
     right_lines = []
     left_lines = []
-    lane_lines = []
-
+    
     width = original_img.shape[1]
     boundary = 1/3    
 
@@ -290,4 +287,3 @@ def compute_pd_control(steering_angle, last_error, last_time, kp=0.4, kd_ratio=0
 
 if __name__ == "__main__":
     main()
-
