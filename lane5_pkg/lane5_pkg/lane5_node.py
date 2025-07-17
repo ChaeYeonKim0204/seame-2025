@@ -72,11 +72,11 @@ class ImageSubscriber(Node):
         
 def main():
     rp.init()
-    pid = PID(0.00002, 0.001, 0.01, setpoint=0)
+    pid = PID(0.45, 0.0007, 0.15, setpoint=0)
     cfg = {
-        'PID_P': 0.00002,
-        'PID_I': 0.001,
-        'PID_D': 0.01,
+        'PID_P': 0.45,
+        'PID_I': 0.0007,
+        'PID_D': 0.15,
         'target_threshold': 20,
         'throttle_min': 0.2,
         'throttle_max': 0.3,
@@ -193,13 +193,13 @@ def separateLine(lines, original_img):
     if not lines:
         return [[], []]
 
-    x_center = original_img.shape[1] /2
+    x_center = original_img.shape[1] /3
    
         # 중심선을 기준으로 양쪽에 위치한 선을 분리
     for x1, y1, x2, y2 in lines:
-        if x1 < x_center and x2 < x_center:
+        if x2 < x_center:
             left_lines.append([x1, y1, x2, y2])
-        elif x1 > x_center and x2 > x_center:
+        elif x2 > x_center * 2:
             right_lines.append([x1, y1, x2, y2])
     
     # print(f"[right_lines: {right_lines}, left_lines: {left_lines}]")      
@@ -320,34 +320,34 @@ def compute_intersection(represent_points, original_img):
     target_x = int(center_fitx_array[target_y])
     center_fitx = target_x
     
-    # # 🖼️ 시각화
-    # vis_img = original_img.copy()
+    # 🖼️ 시각화
+    vis_img = original_img.copy()
 
-    # # 좌우 차선 선 그리기 (파란색)
-    # for i in range(0, height - 1, 5):
-    #     pt1 = (int(left_fitx[i]), int(ploty[i]))
-    #     pt2 = (int(left_fitx[i + 1]), int(ploty[i + 1]))
-    #     if 0 <= pt1[0] < width and 0 <= pt2[0] < width:
-    #         cv2.line(vis_img, pt1, pt2, (255, 0, 0), 2)
+    # 좌우 차선 선 그리기 (파란색)
+    for i in range(0, height - 1, 5):
+        pt1 = (int(left_fitx[i]), int(ploty[i]))
+        pt2 = (int(left_fitx[i + 1]), int(ploty[i + 1]))
+        if 0 <= pt1[0] < width and 0 <= pt2[0] < width:
+            cv2.line(vis_img, pt1, pt2, (255, 0, 0), 2)
 
-    #     pt1 = (int(right_fitx[i]), int(ploty[i]))
-    #     pt2 = (int(right_fitx[i + 1]), int(ploty[i + 1]))
-    #     if 0 <= pt1[0] < width and 0 <= pt2[0] < width:
-    #         cv2.line(vis_img, pt1, pt2, (255, 0, 0), 2)
+        pt1 = (int(right_fitx[i]), int(ploty[i]))
+        pt2 = (int(right_fitx[i + 1]), int(ploty[i + 1]))
+        if 0 <= pt1[0] < width and 0 <= pt2[0] < width:
+            cv2.line(vis_img, pt1, pt2, (255, 0, 0), 2)
 
-    # # 중앙선 그리기 (초록색)
-    # for i in range(0, height - 1, 5):
-    #     pt1 = (int(center_fitx_array[i]), int(ploty[i]))
-    #     pt2 = (int(center_fitx_array[i + 1]), int(ploty[i + 1]))
-    #     if 0 <= pt1[0] < width and 0 <= pt2[0] < width:
-    #         cv2.line(vis_img, pt1, pt2, (0, 255, 0), 2)
+    # 중앙선 그리기 (초록색)
+    for i in range(0, height - 1, 5):
+        pt1 = (int(center_fitx_array[i]), int(ploty[i]))
+        pt2 = (int(center_fitx_array[i + 1]), int(ploty[i + 1]))
+        if 0 <= pt1[0] < width and 0 <= pt2[0] < width:
+            cv2.line(vis_img, pt1, pt2, (0, 255, 0), 2)
 
-    # # 목표 포인트 (빨간 점)
-    # cv2.circle(vis_img, (target_x, target_y), 6, (0, 0, 255), -1)
+    # 목표 포인트 (빨간 점)
+    cv2.circle(vis_img, (target_x, target_y), 6, (0, 0, 255), -1)
 
-    # # 텍스트 출력
-    # cv2.putText(vis_img, f"Target X: {target_x}", (10, 30),
-    #             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    # 텍스트 출력
+    cv2.putText(vis_img, f"Target X: {target_x}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
     # # 실제 표시
     # cv2.imshow("Lane + Center Line", vis_img)
