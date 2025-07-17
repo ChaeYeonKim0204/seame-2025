@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from rclpy.qos import qos_profile_sensor_data
 import math
+import time
 
 class ImageSubscriber(Node):
     def __init__(self):
@@ -15,86 +16,56 @@ class ImageSubscriber(Node):
         self.steering_pub = self.create_publisher(Float32, '/steering', 10)
         self.throttle_pub = self.create_publisher(Float32, '/throttle', 10)
         self.cb = CvBridge()
-        self.prev_vp = None
-        self.prev_steer = 0.0  # 직진 = 0 기준으로 변경
+        # 🟢 PD 제어용 상태 변수
+        self.last_time = 0.0
+        self.last_error = 0.0
+
+        # 🟡 PD 계수 (원하면 ROS2 파라미터로도 설정 가능)
+        self.kp = 0.4
+        self.kd = self.kp * 0.65
+        self.base_speed = 0.3  # throttle 기본값 (0~1 사이)
 
     def callback(self, msg):
         original_img = self.cb.imgmsg_to_cv2(msg, "bgr8")
         binary = filter_colors(original_img)
         img_mask = region_of_interest(binary)
-        result = selective_erosion(img_mask)
-        canny_img = apply_canny(result)
-        lines = houghLines(canny_img)
-        if lines:
-            distributed_lines = separateLine(lines, original_img)
-            result = regression(distributed_lines, original_img)
+        canny_img = apply_canny(img_mask)
+        lines = detect_line_segments(canny_img)
 
-            if result is not None:
-                if result[0] is None:
-                    self.publish_controls(-0.23, 0.0)
-                    return
-            else:
-                return
+        lane_lines = separateLine(lines, original_img)
+        steering_angle = get_steering_angle(original_img, lane_lines)
 
-            represent_points, detect_code, slope = result
-
-            vp = compute_intersection(represent_points)
-
-            if vp is not None:
-                self.prev_vp = vp  # 새 교점이면 업데이트
-            elif self.prev_vp is not None:
-                vp = self.prev_vp  # 없으면 이전꺼 사용
-            else:
-                self.publish_controls(-0.23, 0.0)
-                return
-
-            vp_vehicle = convert_vp_to_vehicle_coords(vp, original_img.shape)
-            target_heading = compute_target_heading(vp_vehicle)
-            current_heading = compute_current_heading(self.prev_steer)
-            delta_heading = compute_steering_angle(target_heading, current_heading)
-            steering = steering_angle_to_steer(delta_heading)
-            self.prev_steer = steering  # 내부는 0 기준 유지
-            real_steer = steering - 0.23  # 실제 퍼블리시할 값
-
-            print(f"[DEBUG] vp: {vp}, vehicle_coords: {vp_vehicle}")
-            print(f"[DEBUG] target_heading: {math.degrees(target_heading):.2f} deg")
-            print(f"[DEBUG] delta_heading: {math.degrees(delta_heading):.2f} deg")
-            print(f"[DEBUG] steering (real): {real_steer:.3f}")
-
-            throttle = 0.25 if abs(real_steer) < 0.4 else 0.25
-            self.publish_controls(real_steer, throttle)
-        else:
-            self.publish_controls(-0.23, 0.0)
+        steer, throttle, self.last_error, self.last_time = compute_pd_control(steering_angle, self.last_error, self.last_time)
+        self.publish_controls(steer, throttle)
 
     def publish_controls(self, steering, throttle):
         msg_s = Float32()
-        msg_s.data = float(np.clip(steering, -1.23, 1.0))
+        msg_s.data = float(np.clip(steering, -0.7, 0.7))
+        print(f"[PUBLISH] Steering: {msg_s.data:.3f}")
         self.steering_pub.publish(msg_s)
 
         msg_t = Float32()
         msg_t.data = float(np.clip(throttle, 0.0, 0.5))
         self.throttle_pub.publish(msg_t)
-
+        
 def main():
     rp.init()
     image_subscriber = ImageSubscriber()
+
     rp.spin(image_subscriber)
     image_subscriber.destroy_node()
     rp.shutdown()
 
 def filter_colors(original_img):
-    hsv = cv2.cvtColor(original_img,cv2.COLOR_BGR2HSV)
+    hsv = cv2.cvtColor(original_img, cv2.COLOR_BGR2HSV)
     
-    #흰색 임계값(값 수정 필요)
-    lower_white = np.array([0,0,200], dtype=np.uint8)
-    upper_white = np.array([180,30,255], dtype = np.uint8)
+    # 훨씬 보수적인 흰색 임계값
+    lower_white = np.array([0, 0, 240], dtype=np.uint8)
+    upper_white = np.array([180, 15, 255], dtype=np.uint8)
+    
     binary = cv2.inRange(hsv, lower_white, upper_white)
-    
-    # cv2.imshow("Binary Image", binary) # "Binary Image"는 창의 제목입니다.
-    # cv2.waitKey(0)# 키보드 입력 대기. 0은 아무 키나 누를 때까지 무한 대기.
-    # cv2.destroyAllWindows() # 모든 OpenCV 창 닫기
-    
     return binary
+
 
 #사다리꼴로 관심영역 지정
 def region_of_interest(binary):  
@@ -102,8 +73,8 @@ def region_of_interest(binary):
     mask = np.zeros_like(binary)  #빈 마스크 생성 (검정색만 있는 이미지)
      
     bottom_width_percent = 1  # 하단 너비 비율
-    top_width_percent = 0.6 # 상단 너비 비율
-    height_percent = 0.65      # 높이 비율
+    top_width_percent = 0.8 # 상단 너비 비율
+    height_percent = 0.9      # 높이 비율
 
     bottom_left = (int(width * (0.5 - bottom_width_percent / 2)), height)
     bottom_right = (int(width * (0.5 + bottom_width_percent / 2)), height)
@@ -116,9 +87,9 @@ def region_of_interest(binary):
     cv2.fillPoly(mask, polygon, 255)
     img_mask = cv2.bitwise_and(binary, mask)
 
-    # cv2.imshow("roi Image", img_mask) 
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    #cv2.imshow("roi Image", img_mask) 
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
 
     return img_mask
 
@@ -133,31 +104,6 @@ def region_of_interest(binary):
     # cv2.fillPoly(mask, polygon, 255)  # 관심 영역을 흰색(255)으로 채움
     
     # img_mask = cv2.bitwise_and(binary, mask)  # 관심영역만 추출
-
-def selective_erosion(img_mask, thickness_thresh=10, erosion_iter=1):
-    """
-    두께(또는 면적)가 일정 기준을 넘는 차선 영역에만 erosion 적용
-    """
-    kernel = np.ones((3, 3), np.uint8)
-    result = img_mask.copy()
-
-    contours, _ = cv2.findContours(img_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    for cnt in contours:
-        x, y, w, h = cv2.boundingRect(cnt)
-        
-        if w > thickness_thresh:  # → '두꺼운' 차선으로 판단
-            # 해당 영역만 잘라서 erosion 적용
-            roi = img_mask[y:y+h, x:x+w]
-            eroded_roi = cv2.erode(roi, kernel, iterations=erosion_iter)
-            result[y:y+h, x:x+w] = eroded_roi  # 다시 넣어줌
-
-    # # 확인용 출력
-    # cv2.imshow("Selective Erosion", result)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-    return result
-
     
 def apply_canny(result, low_thresh=100, high_thresh=200):
     """
@@ -171,210 +117,177 @@ def apply_canny(result, low_thresh=100, high_thresh=200):
 
 
 # 허프 변환에 새로운 함수 추가 
-def houghLines(canny_img):
-    lines = cv2.HoughLinesP(canny_img , rho=1, theta = np.pi/180, threshold=30, minLineLength=15, maxLineGap=10)
+def detect_line_segments(canny_img):
+    lines = cv2.HoughLinesP(canny_img , rho=1, theta = np.pi/180, threshold=30, minLineLength=10, maxLineGap=5)
             
     # 직선이 감지되면
     if lines is not None:
         # print("직선 검출 완료")
         # x1, y1, x2, y2을 반환
         return [line[0].tolist() for line in lines] 
+    
     return []
 
 # 오른쪽, 왼쪽 차선 분리
-def separateLine(lines, original_img):
-    right_lines = []
-    left_lines = []
-
-    width = original_img.shape[1]
-    x_center = width / 2
-
+def separateLine(lines, original_img):    
     if not lines:
         return [[], []]
 
-    # 가중 평균 중심 계산
-    x_coords = []
-    weights = []
-    for x1, y1, x2, y2 in lines:
-        x_coords.extend([x1, x2])
-        weights.extend([y1, y2])  # 아래쪽 점일수록 더 중요한 선으로 간주
+    right_lines = []
+    left_lines = []
+    lane_lines = []
 
-    x_center = int(np.average(x_coords, weights=weights))
-    # print(f"[DEBUG] 동적 x_center (가중 평균): {x_center}")
+    width = original_img.shape[1]
+    boundary = 1/3    
 
-    for i in lines:
-        x1, y1, x2, y2 = i
+    left_region_boundary = width * (1 - boundary)
+    right_region_boundary = width * boundary
 
-        dx = x2 - x1
-        dy = y2 - y1
+    for line_segment in lines:
+        for x1, y1, x2, y2 in line_segment:
+            if x1 == x2:
+                print("skipping vertical lines (slope = infinity")
+                continue
+            
+            # fit = np.polyfit((x1, x2), (y1, y2), 1)
+            slope = (y2 - y1) / (x2 - x1)
+            intercept = y1 - (slope * x1)
+            
+            if slope < 0:
+                if x1 < left_region_boundary and x2 < left_region_boundary:
+                    left_lines.append((slope, intercept))
+            else:
+                if x1 > right_region_boundary and x2 > right_region_boundary:
+                    right_lines.append((slope, intercept))
+   
+        left_lines_average = np.average(left_lines, axis=0)
+        if len(left_lines) > 0:
+            lane_lines.append(make_points(original_img, left_lines_average))
 
-        if dx == 0:
-            # 수직선: slope는 무한대 → 차선으로 쓰기 애매 → 무시
-            # print("수직선 (x1 == x2), 무시")
-            continue
+        right_lines_average = np.average(right_lines, axis=0)
+        if len(right_lines) > 0:
+            lane_lines.append(make_points(original_img, right_lines_average))
 
-        if dy == 0:
-            # 수평선 → 정지선일 가능성 높음
-            # print("수평선 (y1 == y2), 정지선 후보")
-            continue
+    return lane_lines
 
-        slope = dy / dx
-
-        # 중심선을 기준으로 양쪽에 위치한 선을 분리
-        if x1 < x_center and x2 < x_center:
-            left_lines.append([x1, y1, x2, y2])
-        elif x1 > x_center and x2 > x_center:
-            right_lines.append([x1, y1, x2, y2])
-
-    return [right_lines, left_lines]
-
-
-def safe_slope(vx, vy, epsilon=1e-6):
-    if abs(vx[0]) < epsilon:
-        # 수직선 또는 수직에 가까운 선
-        return float('inf')
-    else:
-        return vy[0] / vx[0]
-        
-#기울기와 직선의 시작점과 끝점좌표 반환
-def fit_line(original_img, pts, fin_y=100):  #distributed_lines -> cv2.fitLine() 함수에 넣을 좌표들
-    if len(pts) < 2:
-        return None, None
-    
+def make_points(original_img, lines_average):
     height = original_img.shape[0]
-
-    vx, vy, x0, y0 = cv2.fitLine(np.array(pts), cv2.DIST_L2, 0, 0.01, 0.01)
-    slope = safe_slope(vx, vy)
-
-    if math.isinf(slope):
-        init_x = int(x0[0])
-        fin_x = int(x0[0])
-    else:
-        init_x = int(((height - y0[0]) / slope) + x0[0])
-        fin_x = int(((fin_y - y0[0]) / slope) + x0[0])
-
-    return slope, [(init_x, height), (fin_x, fin_y)]
-
-# 대표 직선 검출
-def regression(distributed_lines, original_img):
-    right_lines, left_lines = distributed_lines
-    height, width = original_img.shape[:2]
-    slope = [None] * 2
-    detect_code = [0, 0]
-  
-    # 결과 저장용
-    represent_points = [None] * 4
-    left_detect = 0
-    right_detect = 0
-
-    # --------오른쪽 차선 처리-------------------
-    right_pts = []
-    if right_lines:
-        for x1, y1, x2, y2 in right_lines:
-            right_pts.append((x1, y1))
-            right_pts.append((x2, y2))
-        
-        slp, points = fit_line(original_img, right_pts)
-        slope[0] = slp
-        if points:
-            #오른쪽 차선 하단 점
-            represent_points[0] = points[0]
-            #오른쪽 차선 상단 점
-            represent_points[1] = points[1]
-            detect_code[0] = 1
-       
-    # --------------- 왼쪽 차선 처리----------------
-    left_pts = []
-    if left_lines:
-        for x1, y1, x2, y2 in left_lines:
-            left_pts.append((x1, y1))
-            left_pts.append((x2, y2))
-        
-        slp, points = fit_line(original_img, left_pts) #최소제곱법(최적 직선)을 구하는 함수
-        slope[1] = slp
-        if points:
-            represent_points[2] = points[0]
-            represent_points[3] = points[1]
-            detect_code[1] = 1
-            
-    if all (p is None for p in represent_points):
-        return None, detect_code, slope
-        
-    print(f"대표차선 좌표: {represent_points}")    
-    return represent_points, detect_code, slope
-
-def compute_intersection(represent_points):
-    if represent_points[0] is None or represent_points[1] is  None:
-        # print("오른쪽 차선 없음")
-        return None
     
-    elif represent_points[2] is None or represent_points[3] is None:
-        # print("왼쪽 차선 없음")
-        return None
-
-    # 오른쪽 차선 기울기, y 절편 구하기
-    right_fit = np.polyfit((represent_points[0][0],represent_points[1][0]),(represent_points[0][1],represent_points[1][1]), 1)
-    right_slope = right_fit[0]
-    right_y = right_fit[1]
-
-    # 왼쪽
-    left_fit = np.polyfit((represent_points[2][0],represent_points[3][0]),(represent_points[2][1],represent_points[3][1]), 1)
-    left_slope = left_fit[0]
-    left_y = left_fit[1]
-
-    # 기울기 행렬    
-    A = np.array([[right_slope, -1], [left_slope, -1]])
-    # y절편 행렬                                
-    B = np.array([-right_y, -left_y])
+    slope, intercept = lines_average
+    
+    y1 = height  # bottom of the frame
+    y2 = int(y1 / 2)  # make points from middle of the frame down
+    
+    if slope == 0:
+        slope = 0.1
         
-    # 연립방정식으로 교점 구하기
-    try:
-        vp = np.linalg.solve(A,B)
-        print(f"{vp}")
-        return tuple(vp)
-            
-    except np.linalg.LinAlgError:
-        print("두 직선은 평행하거나 일치하여 교점을 찾을 수 없습니다.")
-        return None
+    x1 = int((y1 - intercept) / slope)
+    x2 = int((y2 - intercept) / slope)
+    
+    return [[x1, y1, x2, y2]]
 
-# 새로운 좌표계 변환 및 기하 계산 함수들 유지:
-def convert_vp_to_vehicle_coords(vp, image_shape):
-    img_w, img_h = image_shape[1], image_shape[0]
-    x_vehicle = ((vp[0] - img_w / 2) / img_w) * 0.8
-    y_vehicle = ((img_h - vp[1]) / img_h) * 1.2
-    return np.array([x_vehicle, y_vehicle])
+# def display_lines(original_img, lines, line_color=(0, 255, 0), line_width=6):
+#     line_image = np.zeros_like(original_img)
+    
+#     if lines is not None:
+#         for line in lines:
+#             for x1, y1, x2, y2 in line:
+#                 cv2.line(line_image, (x1, y1), (x2, y2), line_color, line_width)
+                
+#     line_image = cv2.addWeighted(original_img, 0.8, line_image, 1, 1)
+    
+#     return line_image
 
-def compute_target_heading(vp_vehicle):
-    target_heading = math.atan2(vp_vehicle[1], vp_vehicle[0])  # → x축 기준
-    target_heading -= math.pi / 2  # → y축 기준으로 보정    
-    return target_heading
+# def display_heading_line(original_img, steering_angle, line_color=(0, 0, 255), line_width=5 ):
+#     heading_image = np.zeros_like(original_img)
+#     height, width, _ = original_img.shape
+    
+#     steering_angle_radian = steering_angle / 180.0 * math.pi
+    
+#     x1 = int(width / 2)
+#     y1 = height
+#     x2 = int(x1 - height / 2 / math.tan(steering_angle_radian))
+#     y2 = int(height / 2)
+    
+#     cv2.line(heading_image, (x1, y1), (x2, y2), line_color, line_width)
+#     heading_image = cv2.addWeighted(original_img, 0.8, heading_image, 1, 1)
+    
+#     return heading_image
+        
+def get_steering_angle(original_img, lane_lines):
+    
+    height,width,_ = original_img.shape
+    
+    if len(lane_lines) == 2:
+        _, _, left_x2, _ = lane_lines[0][0]
+        _, _, right_x2, _ = lane_lines[1][0]
+        mid = int(width / 2)
+        x_offset = (left_x2 + right_x2) / 2 - mid
+        y_offset = int(height / 2)
+        
+    elif len(lane_lines) == 1:
+        x1, _, x2, _ = lane_lines[0][0]
+        x_offset = x2 - x1
+        y_offset = int(height / 2)
+        
+    elif len(lane_lines) == 0:
+        x_offset = 0
+        y_offset = int(height / 2)
+        
+    angle_to_mid_radian = math.atan(x_offset / y_offset)
+    angle_to_mid_deg = int(angle_to_mid_radian * 180.0 / math.pi)  
+    steering_angle = angle_to_mid_deg + 90
+    
+    return steering_angle
 
-def compute_current_heading(prev_steer, max_angle=math.radians(45)):
-    """
-    prev_steer: 실제 조향 값 (-1.23 ~ 1.0, 직진은 -0.23)
-    max_angle: 기하학적 최대 조향 각도
-    """
-    if prev_steer >= -0.23:
-        normalized = (prev_steer + 0.23) / (1.0 + 0.23)  # 우회전 영역
+
+def compute_pd_control(steering_angle, last_error, last_time, kp=0.4, kd_ratio=0.65, base_speed=0.3):
+    now = time.time()
+    dt = now - last_time if last_time != 0 else 1e-3
+    error = abs(steering_angle - 90)
+
+    deviation = steering_angle - 90
+    if -5 < deviation < 5:
+        steering = 0.0
+        error = 0.0
     else:
-        normalized = (prev_steer + 0.23) / (1.23 - 0.23)  # 좌회전 영역
-    heading_rad = normalized * max_angle
-    return heading_rad
+        steering = deviation / 180.0
+        steering = max(min(steering, 0.5), -0.5)
 
-def compute_steering_angle(target_heading, current_heading):
-    delta_rad = target_heading - current_heading
-    delta_rad = (delta_rad + math.pi) % (2 * math.pi) - math.pi
-    return delta_rad
+    kd = kp * kd_ratio
+    derivative = kd * (error - last_error) / dt
+    proportional = kp * error
+    pd_value = base_speed + derivative + proportional
+    throttle = max(min(abs(pd_value), 1.0), 0.0)
 
-def steering_angle_to_steer(delta_rad, max_angle=math.radians(45)):
-    normalized = delta_rad / max_angle
-    normalized = np.clip(normalized, -1.0, 1.0)
-    normalized *= 0.8
-    if normalized >= 0:
-        return normalized * (1.0 + 0.23) - 0.23
-    else:
-        return normalized * (1.23 - 0.23) - 0.23
+    return steering, throttle, error, now
+
+
+# def draw_detected_lines(original_img, represent_points, vp=None):
+#     # 복사본 만들기
+#     img = original_img.copy()
+
+#     # 대표 차선 좌표가 있을 때만 그림
+#     # 오른쪽 차선 (파란색)
+#     if represent_points[0] is None or represent_points[1] is None or represent_points[2] is None:
+#             print("오른쪽 차선 없음")
+#             return None
+        
+#     # 왼쪽 차선 점들 (3, 4, 5)
+#     elif represent_points[3] is None or represent_points[4] is None or represent_points[5] is None:
+#         print("왼쪽 차선 없음")
+#         return None
+        
+#     # 교차점 (빨간 점)
+#     if vp is not None:
+#         vp_point = (int(vp[0]), int(vp[1]))
+#         cv2.circle(img, vp_point, 8, (0, 0, 255), -1)
+
+#     return img
+    
+
 
 
 if __name__ == "__main__":
     main()
+
