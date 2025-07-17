@@ -21,21 +21,27 @@ class ImageSubscriber(Node):
         self.last_error = 0.0
 
         # 🟡 PD 계수 (원하면 ROS2 파라미터로도 설정 가능)
-        self.kp = 0.4
+        self.kp = 0.2
         self.kd = self.kp * 0.65
-        self.base_speed = 0.3  # throttle 기본값 (0~1 사이)
+        self.base_speed = 0.2  # throttle 기본값 (0~1 사이)
 
     def callback(self, msg):
         original_img = self.cb.imgmsg_to_cv2(msg, "bgr8")
-        binary = filter_colors(original_img)
-        img_mask = region_of_interest(binary)
-        canny_img = apply_canny(img_mask)
-        lines = detect_line_segments(canny_img)
+        binary ,yellow, yellowmask = filter_colors(original_img)
 
-        lane_lines = separateLine(lines, original_img)
-        steering_angle = get_steering_angle(original_img, lane_lines)
+        if yellow > 0: 
+            yellow_steering_angle = yellow_detect(yellowmask)
+            steer, throttle, self.last_error, self.last_time = yellow_compute_pd_control(steering_angle, self.last_error, self.last_time)
+        else:
+            img_mask = region_of_interest(binary)
+            canny_img = apply_canny(img_mask)
+            lines = detect_line_segments(canny_img)
 
-        steer, throttle, self.last_error, self.last_time = compute_pd_control(steering_angle, self.last_error, self.last_time)
+            lane_lines = separateLine(lines, original_img)
+            steering_angle = get_steering_angle(original_img, lane_lines)
+
+            steer, throttle, self.last_error, self.last_time = compute_pd_control(steering_angle, self.last_error, self.last_time)
+
         self.publish_controls(steer, throttle)
 
     def publish_controls(self, steering, throttle):
@@ -62,9 +68,47 @@ def filter_colors(original_img):
     # 훨씬 보수적인 흰색 임계값
     lower_white = np.array([0, 0, 240], dtype=np.uint8)
     upper_white = np.array([180, 15, 255], dtype=np.uint8)
-    
+
+    # 훨씬 보수적인 노란색 임계값
+    lower_yellow = np.array([18, 94, 140], dtype=np.uint8)
+    upper_yellow = np.array([48, 255, 255], dtype=np.uint8)
+
+    yellowmask = cv2.inRange(hsv, lower_yellow, upper_yellow)
     binary = cv2.inRange(hsv, lower_white, upper_white)
-    return binary
+
+    yellow = cv2.countNonZero(yellowmask)
+    return binary , yellow, yellowmask
+
+def yellow_detect(yellowmask):
+    yellow_canny =apply_canny(region_of_interest(yellowmask))
+    yellow_lines = detect_line_segments(yellow_canny)
+    yellow_lane_lines = separateLine(yellow_lines, original_img)
+    yellow_steering_angle = get_steering_angle(original_img, yellow_lane_lines)
+
+    return yellow_steering_angle
+
+def yellow_compute_pd_control(yellow_steering_angle, last_error, last_time, kp=0.4, kd_ratio=0.65, base_speed=0.3):
+    now = time.time()
+    dt = now - last_time if last_time != 0 else 1e-3
+    error = abs(steering_angle - 90)
+
+    deviation = steering_angle - 90
+    if -5 < deviation < 5:
+        steering = 0.0
+        error = 0.0
+    else:
+        steering = deviation / 180.0
+        steering = max(min(steering, 0.4), -0.4)
+        steering -= 0.23
+
+    kd = kp * kd_ratio
+    derivative = kd * (error - last_error) / dt
+    proportional = kp * error
+    pd_value = base_speed + derivative + proportional
+    throttle = max(min(abs(pd_value), 0.25), 0.25)
+
+    return steering, throttle, error, now
+
 
 
 #사다리꼴로 관심영역 지정
@@ -157,13 +201,13 @@ def separateLine(lines, original_img):
                 if x1 > right_region_boundary and x2 > right_region_boundary:
                     right_lines.append((slope, intercept))
    
-        left_lines_average = np.average(left_lines, axis=0)
-        if len(left_lines) > 0:
-            lane_lines.append(make_points(original_img, left_lines_average))
+    left_lines_average = np.average(left_lines, axis=0)
+    if len(left_lines) > 0:
+        lane_lines.append(make_points(original_img, left_lines_average))
 
-        right_lines_average = np.average(right_lines, axis=0)
-        if len(right_lines) > 0:
-            lane_lines.append(make_points(original_img, right_lines_average))
+    right_lines_average = np.average(right_lines, axis=0)
+    if len(right_lines) > 0:
+        lane_lines.append(make_points(original_img, right_lines_average))
 
     return lane_lines
 
@@ -213,7 +257,7 @@ def make_points(original_img, lines_average):
         
 def get_steering_angle(original_img, lane_lines):
     
-    height,width,_ = original_img.shape
+    height,width = original_img.shape[:2]
     
     if len(lane_lines) == 2:
         _, _, left_x2, _ = lane_lines[0][0]
@@ -230,6 +274,8 @@ def get_steering_angle(original_img, lane_lines):
     elif len(lane_lines) == 0:
         x_offset = 0
         y_offset = int(height / 2)
+    else:
+        return 90
         
     angle_to_mid_radian = math.atan(x_offset / y_offset)
     angle_to_mid_deg = int(angle_to_mid_radian * 180.0 / math.pi)  
@@ -249,15 +295,18 @@ def compute_pd_control(steering_angle, last_error, last_time, kp=0.4, kd_ratio=0
         error = 0.0
     else:
         steering = deviation / 180.0
-        steering = max(min(steering, 0.5), -0.5)
+        steering = max(min(steering, 0.4), -0.4)
+        steering -= 0.23
 
     kd = kp * kd_ratio
     derivative = kd * (error - last_error) / dt
     proportional = kp * error
     pd_value = base_speed + derivative + proportional
-    throttle = max(min(abs(pd_value), 1.0), 0.0)
+    throttle = max(min(abs(pd_value), 0.25), 0.25)
 
     return steering, throttle, error, now
+
+    
 
 
 # def draw_detected_lines(original_img, represent_points, vp=None):
