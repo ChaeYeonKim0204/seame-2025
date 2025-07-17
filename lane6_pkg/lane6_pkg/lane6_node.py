@@ -29,9 +29,9 @@ class ImageSubscriber(Node):
         original_img = self.cb.imgmsg_to_cv2(msg, "bgr8")
         binary ,yellow, yellowmask = filter_colors(original_img)
 
-        if yellow > 0: 
-            yellow_steering_angle = yellow_detect(yellowmask)
-            steer, throttle, self.last_error, self.last_time = yellow_compute_pd_control(steering_angle, self.last_error, self.last_time)
+        if yellow > 0:
+            yellow_steering_angle = yellow_detect(yellowmask,original_img)
+            steer, throttle, self.last_error, self.last_time = yellow_compute_pd_control(yellow_steering_angle, self.last_error, self.last_time)
         else:
             img_mask = region_of_interest(binary)
             canny_img = apply_canny(img_mask)
@@ -54,8 +54,8 @@ class ImageSubscriber(Node):
         msg_t.data = float(np.clip(throttle, 0.0, 0.5))
         self.throttle_pub.publish(msg_t)
         
-def main():
-    rp.init()
+def main(args=None):
+    rp.init(args=args)
     image_subscriber = ImageSubscriber()
 
     rp.spin(image_subscriber)
@@ -79,22 +79,23 @@ def filter_colors(original_img):
     yellow = cv2.countNonZero(yellowmask)
     return binary , yellow, yellowmask
 
-def yellow_detect(yellowmask):
+def yellow_detect(yellowmask,original_img):
     yellow_canny =apply_canny(region_of_interest(yellowmask))
     yellow_lines = detect_line_segments(yellow_canny)
     yellow_lane_lines = separateLine(yellow_lines, original_img)
     yellow_steering_angle = get_steering_angle(original_img, yellow_lane_lines)
+    yellow_steering_angle = 180 - yellow_steering_angle
 
     return yellow_steering_angle
 
 def yellow_compute_pd_control(yellow_steering_angle, last_error, last_time, kp=0.4, kd_ratio=0.65, base_speed=0.3):
     now = time.time()
     dt = now - last_time if last_time != 0 else 1e-3
-    error = abs(steering_angle - 90)
+    error = abs(yellow_steering_angle - 90)
 
-    deviation = steering_angle - 90
+    deviation = yellow_steering_angle - 90
     if -5 < deviation < 5:
-        steering = 0.0
+        steering = -0.23
         error = 0.0
     else:
         steering = deviation / 180.0
@@ -105,7 +106,7 @@ def yellow_compute_pd_control(yellow_steering_angle, last_error, last_time, kp=0
     derivative = kd * (error - last_error) / dt
     proportional = kp * error
     pd_value = base_speed + derivative + proportional
-    throttle = max(min(abs(pd_value), 0.25), 0.25)
+    throttle = max(min(abs(pd_value), 0.2), 0.25)
 
     return steering, throttle, error, now
 
@@ -280,7 +281,8 @@ def get_steering_angle(original_img, lane_lines):
     angle_to_mid_radian = math.atan(x_offset / y_offset)
     angle_to_mid_deg = int(angle_to_mid_radian * 180.0 / math.pi)  
     steering_angle = angle_to_mid_deg + 90
-    
+    teering_angle = 180 - steering_angle
+
     return steering_angle
 
 
