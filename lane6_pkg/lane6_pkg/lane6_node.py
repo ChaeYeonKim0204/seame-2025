@@ -21,32 +21,28 @@ class ImageSubscriber(Node):
         self.last_error = 0.0
 
         # 🟡 PD 계수 (원하면 ROS2 파라미터로도 설정 가능)
-        self.kp = 0.2
+        self.kp = 0.45
         self.kd = self.kp * 0.65
         self.base_speed = 0.2  # throttle 기본값 (0~1 사이)
 
     def callback(self, msg):
         original_img = self.cb.imgmsg_to_cv2(msg, "bgr8")
-        binary ,yellow, yellowmask = filter_colors(original_img)
+        binary ,yellow, yellowmask, white, red = filter_colors(original_img)
+        img_mask = region_of_interest(binary)
+        canny_img = apply_canny(img_mask)
+        lines = detect_line_segments(canny_img)
 
-        if yellow > 0:
-            yellow_steering_angle = yellow_detect(yellowmask,original_img)
-            steer, throttle, self.last_error, self.last_time = yellow_compute_pd_control(yellow_steering_angle, self.last_error, self.last_time)
-        else:
-            img_mask = region_of_interest(binary)
-            canny_img = apply_canny(img_mask)
-            lines = detect_line_segments(canny_img)
-
-            lane_lines = separateLine(lines, original_img)
-            steering_angle = get_steering_angle(original_img, lane_lines)
-
-            steer, throttle, self.last_error, self.last_time = compute_pd_control(steering_angle, self.last_error, self.last_time)
-
+        lane_lines = separateLine(lines, original_img)
+        steering_angle = get_steering_angle(original_img, lane_lines)
+        if red > 20000:
+            steer, throttle, self.last_error, self.last_time = red_compute_pd_control(steering_angle, self.last_error, self.last_time, kp=self.kp)
+        else: 
+            steer, throttle, self.last_error, self.last_time = compute_pd_control(steering_angle, self.last_error, self.last_time, kp=self.kp)
         self.publish_controls(steer, throttle)
 
     def publish_controls(self, steering, throttle):
         msg_s = Float32()
-        msg_s.data = float(np.clip(steering, -0.7, 0.7))
+        msg_s.data = float(np.clip(steering, -0.9, 0.7))
         print(f"[PUBLISH] Steering: {msg_s.data:.3f}")
         self.steering_pub.publish(msg_s)
 
@@ -66,20 +62,32 @@ def filter_colors(original_img):
     hsv = cv2.cvtColor(original_img, cv2.COLOR_BGR2HSV)
     
     # 훨씬 보수적인 흰색 임계값
-    lower_white = np.array([0, 0, 240], dtype=np.uint8)
-    upper_white = np.array([180, 15, 255], dtype=np.uint8)
+    lower_white = np.array([0, 0, 200], dtype=np.uint8)
+    upper_white = np.array([180, 60, 255], dtype=np.uint8)
 
     # 훨씬 보수적인 노란색 임계값
     lower_yellow = np.array([18, 94, 140], dtype=np.uint8)
     upper_yellow = np.array([48, 255, 255], dtype=np.uint8)
 
+    # 훨씬 보수적인 빨간색 임계값
+    lower_red = np.array([170, 70, 50], dtype=np.uint8)
+    upper_red = np.array([180, 255, 255], dtype=np.uint8)
+
+
     yellowmask = cv2.inRange(hsv, lower_yellow, upper_yellow)
     binary = cv2.inRange(hsv, lower_white, upper_white)
+    redwmask = cv2.inRange(hsv, lower_red, upper_red)
 
     yellow = cv2.countNonZero(yellowmask)
-    return binary , yellow, yellowmask
+    white = cv2.countNonZero(binary)
+    red = cv2.countNonZero(redwmask)
+
+    # print(f'{white}')
+
+    return binary , yellow, yellowmask , white, red
 
 def yellow_detect(yellowmask,original_img):
+    print("yellow detected")
     yellow_canny =apply_canny(region_of_interest(yellowmask))
     yellow_lines = detect_line_segments(yellow_canny)
     yellow_lane_lines = separateLine(yellow_lines, original_img)
@@ -94,23 +102,47 @@ def yellow_compute_pd_control(yellow_steering_angle, last_error, last_time, kp=0
     error = abs(yellow_steering_angle - 90)
 
     deviation = yellow_steering_angle - 90
-    if -5 < deviation < 5:
+    if -8 < deviation < 8:
         steering = -0.23
         error = 0.0
     else:
         steering = deviation / 180.0
-        steering = max(min(steering, 0.4), -0.4)
-        steering -= 0.23
+        steering = max(min(steering, 0.28), -0.55)
+        if deviation < -8:
+            steering -= 0.39
 
     kd = kp * kd_ratio
     derivative = kd * (error - last_error) / dt
     proportional = kp * error
     pd_value = base_speed + derivative + proportional
-    throttle = max(min(abs(pd_value), 0.2), 0.25)
+    throttle = max(min(abs(pd_value), 0.25), 0.26)
 
     return steering, throttle, error, now
 
+def detective_stop_line(white):
+    if white < 10000:
+        # 정상 주행: 아무것도 하지 않음
+        return "go"
 
+    elif 17000 <= white < 19000:
+        # 출발선: 아예 정지
+        print("[INFO] 출발선 감지됨 - 정지 상태 유지")
+        return "stop"
+
+    elif 19000 <= white:
+        # 횡단보도: 7초 정지 후 주행
+        print("[INFO] 횡단보도 감지됨 - 7초 정지")
+        return "go_after_crosswalk"
+
+    else:
+        # 중간값이거나 판단 불가: 일단 계속 주행
+        return "go"
+# def show_hsv(event, x, y, flags, param):
+#     hsv = cv2.cvtColor(original_img, cv2.COLOR_BGR2HSV)
+#     cv2.setMouseCallback("Image", show_hsv)
+#     if event == cv2.EVENT_LBUTTONDOWN:
+#         pixel = hsv[y, x]
+#         print(f"HSV at ({x},{y}): H={pixel[0]}, S={pixel[1]}, V={pixel[2]}")
 
 #사다리꼴로 관심영역 지정
 def region_of_interest(binary):  
@@ -281,7 +313,7 @@ def get_steering_angle(original_img, lane_lines):
     angle_to_mid_radian = math.atan(x_offset / y_offset)
     angle_to_mid_deg = int(angle_to_mid_radian * 180.0 / math.pi)  
     steering_angle = angle_to_mid_deg + 90
-    teering_angle = 180 - steering_angle
+    steering_angle = 180 - steering_angle
 
     return steering_angle
 
@@ -292,19 +324,20 @@ def compute_pd_control(steering_angle, last_error, last_time, kp=0.4, kd_ratio=0
     error = abs(steering_angle - 90)
 
     deviation = steering_angle - 90
-    if -5 < deviation < 5:
-        steering = 0.0
+    if -8 < deviation < 8:
+        steering = -0.23
         error = 0.0
     else:
         steering = deviation / 180.0
-        steering = max(min(steering, 0.4), -0.4)
-        steering -= 0.23
+        steering = max(min(steering, 0.28), -0.55)
+        if deviation < -8:
+            steering -= 0.39
 
     kd = kp * kd_ratio
     derivative = kd * (error - last_error) / dt
     proportional = kp * error
     pd_value = base_speed + derivative + proportional
-    throttle = max(min(abs(pd_value), 0.25), 0.25)
+    throttle = max(min(abs(pd_value), 0.25), 0.26)
 
     return steering, throttle, error, now
 
@@ -334,6 +367,28 @@ def compute_pd_control(steering_angle, last_error, last_time, kp=0.4, kd_ratio=0
 #     return img
     
 
+def red_compute_pd_control(steering_angle, last_error, last_time, kp=0.4, kd_ratio=0.65, base_speed=0.3):
+    now = time.time()
+    dt = now - last_time if last_time != 0 else 1e-3
+    error = abs(steering_angle - 90)
+
+    deviation = steering_angle - 90
+    if -8 < deviation < 8:
+        steering = -0.23
+        error = 0.0
+    else:
+        steering = deviation / 180.0
+        steering = max(min(steering, 0.3), -0.55)
+        if deviation < -8:
+            steering -= 0.39
+
+    kd = kp * kd_ratio
+    derivative = kd * (error - last_error) / dt
+    proportional = kp * error
+    pd_value = base_speed + derivative + proportional
+    throttle = 0.23
+
+    return steering, throttle, error, now
 
 
 if __name__ == "__main__":
