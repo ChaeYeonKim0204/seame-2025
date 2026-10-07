@@ -97,10 +97,10 @@ def generate_launch_description():
             ]
         ),
         Node(
-            package='lane6_pkg',
-            executable='lane6_node',
-            namespace='/lane6',
-            name='lane6_node',
+            package='lane_following',
+            executable='lane_following_node',
+            namespace='/lane_following',
+            name='lane_following_node',
             output='screen',
             # arguments=['--ros-args', '--log-level', 'debug']
         ),

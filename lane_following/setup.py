@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 from glob import glob
 import os
 
-package_name = 'lane6_pkg'
+package_name = 'lane_following'
 
 setup(
     name=package_name,
@@ -24,7 +24,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'lane6_node = lane6_pkg.lane6_node:main',
+            'lane_following_node = lane_following.lane_following_node:main',
             'control_node = control.control_node:main',
         ],
     },
