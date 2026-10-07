@@ -89,12 +89,14 @@ def generate_launch_description():
             output='screen',
             parameters=[
                 {"camera_id": 0},  # /dev/video0
-                {"image_width": 1280},
-                {"image_height": 720},
+                {"image_width": 640},   # replacement camera (640x480 max)
+                {"image_height": 480},
                 {"fps": 30.0},
                 {"frame_id": "camera"},
                 {"camera_calibration_file": ""}
-            ]
+            ],
+            # lane_following_node subscribes to /camera/image_raw
+            remappings=[('image', 'image_raw')]
         ),
         Node(
             package='lane_following',

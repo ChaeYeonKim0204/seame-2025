@@ -19,13 +19,12 @@ setup(
     zip_safe=True,
     maintainer='carol',
     maintainer_email='caroline1@kookmin.ac.kr',
-    description='TODO: Package description',
+    description='Camera lane following for the PiRacer (SEA:ME Hackathon 2025 final race code)',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'lane_following_node = lane_following.lane_following_node:main',
-            'control_node = control.control_node:main',
         ],
     },
 )
