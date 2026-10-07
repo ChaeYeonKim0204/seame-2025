@@ -46,7 +46,7 @@ flowchart LR
     A["① 학습<br/>05.06–06.30<br/>ROS2 강의, Notion 노트"] --> B["② 환경 구축<br/>07.03–07.11<br/>Pi 1대, SSH + X11"]
     B --> C["③ GitHub<br/>07.12–07.13<br/>아이디어별 package"]
     C --> D["④ 트랙 테스트<br/>07.14–07.15<br/>채팅 붙여넣기 → 실차 실행"]
-    D --> E["⑤ 대회 1–2일차<br/>07.16–07.17<br/>병렬 시도"]
+    D --> E["⑤ 대회 1–2일 차<br/>07.16–07.17<br/>병렬 시도"]
     E --> F["⑥ 마지막 날<br/>07.17 밤–07.18<br/>node 1개, 기능별 분담"]
     F -.->|2026.10| G["git 이력 복원"]
 
@@ -62,7 +62,7 @@ flowchart LR
 | ② 환경 구축 | Notion 코드 | Windows 정지 이미지 | 없음 | 할 일 5개, node 3개 분리 | 김채연 노트북 |
 | ③ GitHub | GitHub + 채팅 | Pi 첫 실행 | `lane1`–`lane5` packages, `main` | 팀원별 다른 node 버전 | 김채연 계정 |
 | ④ 트랙 테스트 | 채팅 붙여넣기 | 학교 테스트 트랙 | 날짜별 backup branches | 팀원별 버전, logs와 videos | 김채연 실행·debug |
-| ⑤ 대회 1–2일차 | 채팅 붙여넣기 | 대회장 트랙 (team boxbox와 공유) | 07.17 23:10까지 backup branches | PID, C++ port, sliding window, stop line 병렬 | 김채연 실행·debug |
+| ⑤ 대회 1–2일 차 | 채팅 붙여넣기 | 대회장 트랙 (team boxbox와 공유) | 07.17 23:10까지 backup branches | PID, C++ port, sliding window, stop line 병렬 | 김채연 실행·debug |
 | ⑥ 마지막 날 | 채팅 붙여넣기만 | 대회장 트랙, 현장 HSV 측정 | 없음 (붙여넣은 시각 = version) | node 1개에 steering, 어린이 보호구역, stop line, chessboard 분담 | 김채연이 13:02 race version 통합 |
 
 ### 테스트 루프 (④–⑥단계)
